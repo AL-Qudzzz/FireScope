@@ -1,0 +1,122 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --app-bg: #F4F6F8;
+  --surface-1: #FFFFFF;
+  --surface-2: #F8FAFC;
+  --surface-3: #EEF2F6;
+  --border-subtle: #DCE3EA;
+  --text-primary: #16212B;
+  --text-secondary: #526171;
+  --text-muted: #64748B;
+  --ember: #D95D24;
+  --ember-hover: #EA6C32;
+  --modis: #D97706;
+  --viirs: #0284C7;
+  --selected: #16212B;
+  --success: #15803D;
+  --warning: #B45309;
+  --danger: #B91C1C;
+  --unknown: #64748B;
+}
+
+.dark {
+  --app-bg: #0D151B;
+  --surface-1: #14212A;
+  --surface-2: #1B2B35;
+  --surface-3: #243843;
+  --border-subtle: #30434F;
+  --text-primary: #E8EEF2;
+  --text-secondary: #A9B7C0;
+  --text-muted: #7F929E;
+  --ember: #F0783C;
+  --ember-hover: #FF8A50;
+  --modis: #FFB454;
+  --viirs: #61BDE0;
+  --selected: #FFFFFF;
+  --success: #55B88A;
+  --warning: #E7B45A;
+  --danger: #E46D64;
+  --unknown: #71818B;
+}
+
+@layer base {
+  body {
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--app-bg);
+    color: var(--text-primary);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  code, pre, .font-mono {
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Diagonal hatch pattern for unknown/missing data coverage cells (Section 7.4) */
+.pattern-missing-coverage {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(113, 129, 139, 0.14),
+    rgba(113, 129, 139, 0.14) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+/* Custom subtle scrollbars for geospatial drawers */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Leaflet OpenStreetMap & Satellite Canvas Styling */
+.leaflet-container {
+  background-color: #07131D !important;
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
+  outline: none;
+}
+
+.leaflet-tile-pane {
+  filter: contrast(1.03) saturate(1.04);
+}
+
+.leaflet-tooltip.firescope-leaflet-tooltip {
+  background-color: rgba(20, 33, 42, 0.96);
+  border: 1px solid #30434F;
+  border-radius: 6px;
+  color: #E8EEF2;
+  padding: 6px 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.leaflet-tooltip-top.firescope-leaflet-tooltip::before {
+  border-top-color: #30434F;
+}
+
+

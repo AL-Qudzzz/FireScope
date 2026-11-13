@@ -1,0 +1,6 @@
+{
+  "name": "FireScope — Active Fire Intelligence & Activity Calendar",
+  "description": "A specialist geospatial workspace and AOI burning-activity calendar for exploring and comparing MODIS and VIIRS active-fire satellite observations with transparent provenance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
