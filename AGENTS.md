@@ -1,10 +1,10 @@
 # AGENTS.md — AI Agent Operating Rules
 
 ## Mission
-Build the MVP in `PRD.md`: a global AOI-based burning-activity calendar that presents MODIS and VIIRS active-fire observations transparently.
+Build the MVP in `docs/PRD.md`: a global AOI-based burning-activity calendar that presents MODIS and VIIRS active-fire observations transparently.
 
 ## Read first
-Read `README.md`, `PRD.md`, `ARCHITECTURE.md`, `DATA_DICTIONARY.md`, `METHODOLOGY.md`, `API_CONTRACT.md`, `TESTING.md`, and `DECISIONS.md` before making architectural or scientific changes.
+Read `README.md`, `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/DATA_DICTIONARY.md`, `docs/METHODOLOGY.md`, `docs/API_CONTRACT.md`, `docs/TESTING.md`, and `docs/DECISIONS.md` before making architectural or scientific changes.
 
 ## Hard scientific rules
 - Never overwrite or mutate raw NASA source files.
@@ -55,4 +55,4 @@ Stop if challenge rules/resources are unclear, product schemas differ, an unsupp
 Descriptive branches/commits; no force push; do not commit large raw datasets, caches, credentials, or build artifacts.
 
 ## Technical research authority
-Before implementing scientific logic, read `TECHNICAL_RESEARCH.md`. Treat its MVP recommendation (M1/M2) as the safe baseline. Do not implement M3/M4 observation-probability correction unless the integrator approves after reviewing the original paper, exact equations, code/license, required inputs, and validation plan. Never infer missing cloud/observation opportunity from hotspot CSV rows.
+Before implementing scientific logic, read `docs/TECHNICAL_RESEARCH.md`. Treat its MVP recommendation (M1/M2) as the safe baseline. Do not implement M3/M4 observation-probability correction unless the integrator approves after reviewing the original paper, exact equations, code/license, required inputs, and validation plan. Never infer missing cloud/observation opportunity from hotspot CSV rows.

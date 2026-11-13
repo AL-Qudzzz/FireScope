@@ -56,6 +56,23 @@ Rather than flattening distinct satellite sensors into an unvalidated single num
 ├── package.json                     # Dependencies and npm scripts
 ├── .env.example                     # Environment variable template (never commit .env)
 ├── metadata.json                    # Application metadata & capability declarations
+├── AGENTS.md                        # AI agent & scientific engineering guardrails
+├── MANIFEST.json                    # Documentation & research metadata registry
+├── docs/                            # Project specifications, methodology, contracts & test reports
+│   ├── PRD.md
+│   ├── ARCHITECTURE.md
+│   ├── API_CONTRACT.md
+│   ├── DATA_DICTIONARY.md
+│   ├── METHODOLOGY.md
+│   ├── TECHNICAL_RESEARCH.md
+│   ├── NASA_DATA_SOURCES.md
+│   ├── TESTING.md
+│   ├── WHITEBOX_TESTING_REPORT.md
+│   ├── DESIGN.md
+│   ├── DECISIONS.md
+│   ├── BUILD_PROMPT.md
+│   ├── PROJECT_GRAPH.md
+│   └── HACKATHON_EXECUTION.md
 ├── scripts/
 │   └── buildParquet.ts              # Idempotent DuckDB ETL converting immutable data/raw/*.zip -> Parquet + manifest
 ├── data/
@@ -104,7 +121,7 @@ Rather than flattening distinct satellite sensors into an unvalidated single num
 
 ## 4. Scientific Guardrails & Data Provenance
 
-All analytical modules adhere to strict rules documented in `AGENTS.md` and `METHODOLOGY.md`:
+All analytical modules adhere to strict rules documented in `AGENTS.md` and `docs/METHODOLOGY.md`:
 
 1. **No Raw File Mutation:** Files in `data/raw/*.zip` and `data/processed/*` are strictly read-only at runtime. Every source ZIP and extracted CSV carries a recorded SHA-256 checksum inside `data/processed/parquet_manifest.json`.
 2. **Strict Confidence Separation:**
@@ -190,7 +207,7 @@ NODE_ENV=production npm start
 | **TypeScript Typecheck / Lint** | `npm run lint` | Runs `tsc --noEmit` across client and server code |
 | **Production Bundle Check** | `npm run build` | Builds Vite production assets into `dist/` |
 
-> **Verification Status:** See [`WHITEBOX_TESTING_REPORT.md`](./WHITEBOX_TESTING_REPORT.md) for the complete White-Box Testing & PRD Conformance report (24/24 unit & integration tests, 19/19 live HTTP API contract checks, 0-error TypeScript lint & build, and headless Playwright browser verification).
+> **Verification Status:** See [`docs/WHITEBOX_TESTING_REPORT.md`](./docs/WHITEBOX_TESTING_REPORT.md) for the complete White-Box Testing & PRD Conformance report (24/24 unit & integration tests, 19/19 live HTTP API contract checks, 0-error TypeScript lint & build, and headless Playwright browser verification).
 
 ---
 
@@ -210,23 +227,25 @@ Unknown `/api/*` paths return structured JSON `404` (`NOT_FOUND`); invalid param
 | `/api/v1/map/grid` | `GET` | Server-aggregated WGS84 spatial grid/cluster layer (`0.25°`–`2.0°`, capped at `1,500` cells) |
 | `/api/v1/observations` | `GET` | Cursor-paginated canonical observation records (`limit` `1..250`) with full provenance |
 
-Full parameter and response schemas are documented in [`API_CONTRACT.md`](./API_CONTRACT.md).
+Full parameter and response schemas are documented in [`docs/API_CONTRACT.md`](./docs/API_CONTRACT.md).
 
 ---
 
 ## 8. Project Documentation Index
 
-- [`PRD.md`](./PRD.md) — Product requirements, P0/P1/P2 scope, and functional acceptance criteria (`FR-01`–`FR-10`).
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — System architecture and analytical pipeline boundaries.
-- [`API_CONTRACT.md`](./API_CONTRACT.md) — Synchronized REST endpoint specifications and error codes.
-- [`DATA_DICTIONARY.md`](./DATA_DICTIONARY.md) — Canonical observation schema, confidence fields, and platform registry.
-- [`METHODOLOGY.md`](./METHODOLOGY.md) — Scientific harmonization principles (`M0`–`M2`), caveats, and blocked `M3`/`M4` scope.
-- [`TECHNICAL_RESEARCH.md`](./TECHNICAL_RESEARCH.md) — Literature review, FIRMS archive bounds, and statistical baseline rationale.
-- [`NASA_DATA_SOURCES.md`](./NASA_DATA_SOURCES.md) — Verified NASA FIRMS, Earthdata, and user guide bibliography.
-- [`TESTING.md`](./TESTING.md) — Scientific verification strategy and test invariants.
-- [`WHITEBOX_TESTING_REPORT.md`](./WHITEBOX_TESTING_REPORT.md) — Full white-box audit, HTTP contract verification, and browser check report.
+- [`docs/PRD.md`](./docs/PRD.md) — Product requirements, P0/P1/P2 scope, and functional acceptance criteria (`FR-01`–`FR-10`).
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — System architecture and analytical pipeline boundaries.
+- [`docs/API_CONTRACT.md`](./docs/API_CONTRACT.md) — Synchronized REST endpoint specifications and error codes.
+- [`docs/DATA_DICTIONARY.md`](./docs/DATA_DICTIONARY.md) — Canonical observation schema, confidence fields, and platform registry.
+- [`docs/METHODOLOGY.md`](./docs/METHODOLOGY.md) — Scientific harmonization principles (`M0`–`M2`), caveats, and blocked `M3`/`M4` scope.
+- [`docs/TECHNICAL_RESEARCH.md`](./docs/TECHNICAL_RESEARCH.md) — Literature review, FIRMS archive bounds, and statistical baseline rationale.
+- [`docs/NASA_DATA_SOURCES.md`](./docs/NASA_DATA_SOURCES.md) — Verified NASA FIRMS, Earthdata, and user guide bibliography.
+- [`docs/TESTING.md`](./docs/TESTING.md) — Scientific verification strategy and test invariants.
+- [`docs/WHITEBOX_TESTING_REPORT.md`](./docs/WHITEBOX_TESTING_REPORT.md) — Full white-box audit, HTTP contract verification, and browser check report.
+- [`docs/DESIGN.md`](./docs/DESIGN.md) — Visual and UX design system specifications.
+- [`docs/DECISIONS.md`](./docs/DECISIONS.md) — Architectural and scientific decision log.
+- [`docs/PROJECT_GRAPH.md`](./docs/PROJECT_GRAPH.md) — Knowledge graph and data-lineage specification.
 - [`AGENTS.md`](./AGENTS.md) — Engineering and scientific operating guardrails.
-- [`DECISIONS.md`](./DECISIONS.md) — Architectural and scientific decision log.
 
 ---
 

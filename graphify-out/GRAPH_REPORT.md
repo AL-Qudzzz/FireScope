@@ -1,7 +1,7 @@
 # FireScope Knowledge Graph Report (`graphify-out/GRAPH_REPORT.md`)
 
 **Generated:** 2026-11-13T10:45:00Z  
-**Workspace:** FireScope (`AGENTS.md`, `PRD.md`, `DESIGN.md`, `ARCHITECTURE.md`, `DATA_DICTIONARY.md`, `METHODOLOGY.md`, `API_CONTRACT.md`, `TECHNICAL_RESEARCH.md`, `NASA_DATA_SOURCES.md`, `TESTING.md`, `DECISIONS.md`)
+**Workspace:** FireScope (`AGENTS.md`, `README.md`, `docs/PRD.md`, `docs/DESIGN.md`, `docs/ARCHITECTURE.md`, `docs/DATA_DICTIONARY.md`, `docs/METHODOLOGY.md`, `docs/API_CONTRACT.md`, `docs/TECHNICAL_RESEARCH.md`, `docs/NASA_DATA_SOURCES.md`, `docs/TESTING.md`, `docs/DECISIONS.md`, `docs/WHITEBOX_TESTING_REPORT.md`)
 
 ## 1. High-Connectivity Core Nodes
 1. **`BurningActivityCalendar` (`src/components/CalendarHeatmap.tsx`)** — 14 edges (`EXTRACTED`):
