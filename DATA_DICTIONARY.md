@@ -65,11 +65,33 @@ Recommended platform registry fields:
 
 Do not infer a permanent satellite outage from a single archive snapshot. Re-check live archive and NASA status notices.
 
-## 5. Aggregate schema
+## 5. Aggregate & Parquet archive schema
 
+Analytical calendar and comparison responses use:
 `aoi_id`, `time_bin_start_utc`, `time_bin_end_utc`, `spatial_unit_id`, `sensor`, `platform`, `processing_status`, `detection_count`, `frp_sum_mw`, `frp_mean_mw`, `frp_valid_count`, `method_id`, `method_version`, `source_record_count`, `coverage_note`.
 
 For a pooled sensor total, use a field such as `pooled_observation_count`, never `harmonized_fire_count`.
+
+### 5.1 `data/processed/daily_aggregates.parquet` (FR-08 Archive)
+Generated deterministically via `scripts/buildParquet.ts` from immutable raw NASA FIRMS ZIP/CSV downloads (`MODIS C6.1`, `VIIRS S-NPP C2`, `VIIRS NOAA-20 C2`, `VIIRS NOAA-21 C2`) using `0.25°` unprojected WGS84 grid cells (`floor(coord * 4) / 4`):
+
+| Column | Type | Meaning |
+|---|---|---|
+| `acq_date` | VARCHAR (`YYYY-MM-DD`) | UTC acquisition date |
+| `lat_bin` | DOUBLE | Southwest cell latitude (`floor(latitude * 4) / 4`) |
+| `lng_bin` | DOUBLE | Southwest cell longitude (`floor(longitude * 4) / 4`) |
+| `sensor` | VARCHAR | `MODIS` or `VIIRS` |
+| `platform` | VARCHAR | `TERRA`, `AQUA`, `SNPP`, `NOAA20`, `NOAA21` |
+| `processing_status` | VARCHAR | `STANDARD` or `NRT` (deduplicated) |
+| `daynight_native` | VARCHAR | `D`, `N`, or `U` |
+| `confidence_bucket` | VARCHAR | Sensor-native bucket (`low_0_29`/`nominal_30_79`/`high_80_100` for MODIS; `low`/`nominal`/`high` for VIIRS) — never cross-sensor normalized |
+| `detection_count` | BIGINT | Hotspot detections in bucket |
+| `frp_sum_mw` | DOUBLE | Sum of valid finite FRP (MW) in bucket |
+| `frp_valid_count` | BIGINT | Count of valid FRP records |
+| `frp_null_count` | BIGINT | Count of null/missing FRP records |
+
+### 5.2 `data/processed/recent_observations_2026.parquet`
+Stores individual canonical observations from `2026-10-01` through `2026-11-12` for bounded viewport inspection and `/api/v1/observations` pagination without mutating `data/raw/*.zip`.
 
 ## 6. Data validation
 - Validate coordinates and finite numeric values.

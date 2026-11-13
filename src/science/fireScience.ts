@@ -100,6 +100,73 @@ export function validateBoundingBox(bbox: BoundingBox): { valid: boolean; error?
 }
 
 /**
+ * Identifies verified offshore marine oil/gas platform flare zones and deep pelagic ocean basins
+ * far from landmasses and volcanic islands. Never rejects coastal towns, Brazil, Africa, or island chains.
+ */
+export function isVerifiedOffshoreMarineCoordinate(lat: number, lng: number): boolean {
+  if (!validateCoordinates(lat, lng)) return false;
+
+  // 1. Southeast Asia verified offshore oil/gas rig fields
+  // West Natuna offshore (Belanak/Kerisi/Kakap): avoids Anambas (2.8..3.5, 105.6..106.5) & Natuna Besar (3.6..4.3, 107.9..108.5)
+  if (lat >= 3.85 && lat <= 5.8 && lng >= 104.8 && lng <= 107.6) return true;
+  // Sarawak / Luconia / Baram offshore gas fields: avoids Bintulu coast (<3.52), Miri coast (4.1..4.55, 113.8..114.2) & Brunei/Labuan (>114.35)
+  if (lat >= 3.55 && lat <= 5.8 && lng >= 111.0 && lng <= 113.55) return true;
+  if (lat >= 4.58 && lat <= 5.8 && lng > 113.55 && lng <= 114.35) return true;
+  // Vietnam Nam Con Son / Bach Ho offshore rigs
+  if (lat >= 7.2 && lat <= 9.2 && lng >= 107.8 && lng <= 110.2) return true;
+  // West Java Sea ONWJ / Ardjuna / Cinta offshore platforms (north of Java coast -6.05, east of Thousand Islands 106.7)
+  if (lat >= -6.02 && lat <= -4.8 && lng >= 106.75 && lng <= 108.8) return true;
+  // East Java Sea Poleng offshore platform (north of Madura -6.88, south of Bawean -5.9)
+  if (lat >= -6.75 && lat <= -6.2 && lng >= 112.75 && lng <= 113.25) return true;
+  // Timor Sea offshore LNG / gas flares (between Timor, Yamdena, and Tiwi Islands)
+  if (lat >= -10.6 && lat <= -9.2 && lng >= 128.0 && lng <= 130.8) return true;
+  // Gulf of Thailand central offshore platforms
+  if (lat >= 7.2 && lat <= 10.2 && lng >= 101.0 && lng <= 103.5) return true;
+
+  // 2. North Sea offshore oil/gas rigs (strictly between UK and Norway)
+  if (lat >= 55.2 && lat <= 61.8 && lng >= -0.6 && lng <= 4.4) return true;
+
+  // 3. Persian Gulf central offshore rigs (strictly away from Iran, Saudi, Qatar, Bahrain, UAE coasts)
+  if (lat >= 25.05 && lat <= 29.3 && lng >= 49.3 && lng <= 53.6) {
+    const inBahrainQatar = lat >= 24.4 && lat <= 26.4 && lng >= 50.4 && lng <= 51.7;
+    const onIranCoast = (lat >= 27.35 && lng >= 51.8) || (lat >= 28.8 && lng >= 50.1);
+    const onSaudiCoast = (lat <= 26.9 && lng <= 50.35) || (lat <= 28.0 && lng <= 49.5);
+    if (!inBahrainQatar && !onIranCoast && !onSaudiCoast) return true;
+  }
+
+  // 4. Grand Banks (Hibernia / Terra Nova) Atlantic offshore platforms
+  if (lat >= 46.0 && lat <= 47.5 && lng >= -49.5 && lng <= -47.5) return true;
+
+  // 5. Bay of Campeche / Cantarell Gulf of Mexico offshore platforms
+  if (lat >= 19.0 && lat <= 20.5 && lng >= -92.8 && lng <= -91.5) return true;
+
+  // 6. Gulf of Guinea offshore oil platforms (strictly south of Niger Delta coast 4.20N)
+  if (lat >= 2.2 && lat <= 4.2 && lng >= 4.5 && lng <= 8.2) return true;
+
+  // 7. Deep pelagic open-ocean basins (away from oceanic islands and continental shelves)
+  if (lat >= -55 && lat <= -8 && lng >= -33 && lng <= 8) return true; // Deep South Atlantic
+  if (lat >= 15 && lat <= 42 && lng >= -56 && lng <= -32) return true; // Deep Central North Atlantic
+  if (lat >= -46 && lat <= -22 && lng >= 60 && lng <= 92) return true; // Deep Indian Ocean
+  if (lat >= -45 && lat <= -12 && lng >= 92 && lng <= 112) return true; // Deep SE Indian Ocean
+
+  return false;
+}
+
+/**
+ * Classifies whether a canonical NASA FIRMS observation is a verified offshore/marine anomaly
+ * (either explicit NASA FIRMS `type=3` offshore flag or verified offshore oil/gas / deep pelagic zone).
+ * Does not mutate raw observations.
+ */
+export function isOffshoreMarineObservation(
+  obs: Pick<CanonicalObservation, 'latitude' | 'longitude' | 'type_native'>
+): boolean {
+  if (obs.type_native === 3 || String(obs.type_native ?? '').trim() === '3') {
+    return true;
+  }
+  return isVerifiedOffshoreMarineCoordinate(obs.latitude, obs.longitude);
+}
+
+/**
  * Point-in-polygon check (inclusive of vertices and edges) + bounding box check.
  */
 export function isPointInPolygon(lat: number, lng: number, polygon: GeoPoint[]): boolean {
@@ -468,6 +535,7 @@ export function computeFrpSummary(
   const p90Idx = Math.min(validValues.length - 1, Math.floor(validValues.length * 0.9));
   const p90 = validValues[p90Idx];
 
+  const maxMw = validValues[validValues.length - 1];
   const statuses = Array.from(new Set(sensorRecords.map((r) => r.processing_status))).join('/');
 
   return {
@@ -477,6 +545,7 @@ export function computeFrpSummary(
     mean_mw: Number(mean.toFixed(2)),
     median_mw: Number(median.toFixed(2)),
     p90_mw: Number(p90.toFixed(2)),
+    max_mw: Number(maxMw.toFixed(2)),
     valid_count: validValues.length,
     null_count: nullCount,
     processing_status_note: `Computed across ${validValues.length} valid ${sensor} record(s) (${statuses || 'N/A'}).`,
@@ -807,7 +876,7 @@ export function aggregateCalendarAnalytics(params: {
   // Step 3: apply sensor, platform, processing status, day/night, and native confidence filters
   const filteredRecords = canonical.filter((r) => {
     if (sensor !== 'ALL' && r.sensor !== sensor) return false;
-    if (platforms.length > 0 && !platforms.includes(r.platform)) return false;
+    if (!platforms.includes(r.platform)) return false;
     if (processingStatus !== 'ALL' && r.processing_status !== processingStatus) return false;
     if (dayNight !== 'ALL' && r.daynight_native !== dayNight) return false;
     if (r.sensor === 'MODIS' && typeof r.confidence_native === 'number') {
@@ -837,7 +906,7 @@ export function aggregateCalendarAnalytics(params: {
 
     const selectedRegistry = platformRegistry.filter((p) => {
       if (sensor !== 'ALL' && p.sensor !== sensor) return false;
-      if (platforms.length > 0 && !platforms.includes(p.platform_id)) return false;
+      if (!platforms.includes(p.platform_id)) return false;
       return true;
     });
 
@@ -979,28 +1048,46 @@ export function aggregateCalendarAnalytics(params: {
     };
   });
 
-  // Compute P1 Seasonal Baseline comparisons across bins
+  // Compute P1 Seasonal Baseline comparisons across active bins
   const modisSeriesVals = series
     .map((s) => s.values.MODIS)
     .filter((v): v is number => typeof v === 'number');
   const viirsSeriesVals = series
     .map((s) => s.values.VIIRS)
     .filter((v): v is number => typeof v === 'number');
+  const distinctSeriesYears = Array.from(
+    new Set(series.map((s) => Number(s.time_bin_start_utc.slice(0, 4))).filter(Number.isFinite))
+  );
+  const effectiveBaselineYears = distinctSeriesYears.length >= 3 ? distinctSeriesYears : [];
 
   for (const bin of series) {
+    const mUnavailable = bin.values.MODIS === null;
+    const vUnavailable = bin.values.VIIRS === null;
+    const mBase = computeSeasonalBaseline(
+      bin.values.MODIS ?? 0,
+      !mUnavailable && modisSeriesVals.length >= 3 ? modisSeriesVals : [],
+      !mUnavailable && modisSeriesVals.length >= 3 ? effectiveBaselineYears : [],
+      'MODIS'
+    );
+    const vBase = computeSeasonalBaseline(
+      bin.values.VIIRS ?? 0,
+      !vUnavailable && viirsSeriesVals.length >= 3 ? viirsSeriesVals : [],
+      !vUnavailable && viirsSeriesVals.length >= 3 ? effectiveBaselineYears : [],
+      'VIIRS'
+    );
+    if (effectiveBaselineYears.length === 0) {
+      if (mBase.status_label !== 'Baseline unavailable (insufficient history)') {
+        mBase.caveat_note =
+          'Within-selected-window descriptive comparison across active bins (not a multi-year seasonal climatology).';
+      }
+      if (vBase.status_label !== 'Baseline unavailable (insufficient history)') {
+        vBase.caveat_note =
+          'Within-selected-window descriptive comparison across active bins (not a multi-year seasonal climatology).';
+      }
+    }
     bin.seasonal_baseline = {
-      MODIS: computeSeasonalBaseline(
-        bin.values.MODIS ?? 0,
-        modisSeriesVals.length >= 3 ? modisSeriesVals : [4, 7, 6, 9, 5],
-        [2024, 2025, 2026],
-        'MODIS'
-      ),
-      VIIRS: computeSeasonalBaseline(
-        bin.values.VIIRS ?? 0,
-        viirsSeriesVals.length >= 3 ? viirsSeriesVals : [14, 22, 19, 28, 17],
-        [2024, 2025, 2026],
-        'VIIRS'
-      ),
+      MODIS: mBase,
+      VIIRS: vBase,
     };
   }
 

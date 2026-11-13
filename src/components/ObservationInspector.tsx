@@ -144,7 +144,10 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
             <div className="px-3 py-2 flex items-center justify-between">
               <span className="text-[var(--text-secondary)]">Native Confidence</span>
               <span className="font-mono font-semibold text-[var(--text-primary)]">
-                {String(observation.confidence_native)} ({observation.confidence_scheme})
+                {observation.confidence_native !== null && observation.confidence_native !== undefined
+                  ? String(observation.confidence_native)
+                  : 'Unavailable'}{' '}
+                ({observation.confidence_scheme})
               </span>
             </div>
             <div className="px-3 py-2 flex items-center justify-between">

@@ -8,6 +8,7 @@ import {
 } from '../types/firescope';
 import {
   deriveProcessingStatus,
+  isOffshoreMarineObservation,
   isPointInAoi,
   parseUtcAcquisitionTime,
   validateCoordinates,
@@ -303,12 +304,14 @@ export interface ViewportHotspotsQuery {
   dayNight?: 'ALL' | 'D' | 'N';
   modisMinConfidence?: number;
   viirsCategories?: Array<'low' | 'nominal' | 'high'>;
+  excludeOffshore?: boolean;
   maxPoints?: number;
 }
 
 export interface ViewportHotspotsResult {
   items: CanonicalObservation[];
   totalInViewport: number;
+  excludedOffshoreCount: number;
   sampled: boolean;
 }
 
@@ -326,22 +329,24 @@ export function queryLiveFirmsViewport(params: ViewportHotspotsQuery): ViewportH
     startDate,
     endDate,
     sensor = 'ALL',
-    platforms = [],
+    platforms = ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
     processingStatus = 'ALL',
     dayNight = 'ALL',
     modisMinConfidence = 0,
     viirsCategories = ['low', 'nominal', 'high'],
+    excludeOffshore = false,
     maxPoints = 5000,
   } = params;
 
   const filterByAoi = Boolean(aoi && aoi.id !== 'global-world');
   const matching: CanonicalObservation[] = [];
+  let excludedOffshoreCount = 0;
 
   for (let i = 0; i < observations.length; i++) {
     const r = observations[i];
 
     if (sensor !== 'ALL' && r.sensor !== sensor) continue;
-    if (platforms.length > 0 && !platforms.includes(r.platform)) continue;
+    if (!platforms.includes(r.platform)) continue;
     if (processingStatus !== 'ALL' && r.processing_status !== processingStatus) continue;
     if (dayNight !== 'ALL' && r.daynight_native !== dayNight) continue;
     if (startDate && r.acq_date < startDate) continue;
@@ -365,6 +370,11 @@ export function queryLiveFirmsViewport(params: ViewportHotspotsQuery): ViewportH
       if (!isPointInAoi(r.latitude, r.longitude, aoi)) continue;
     }
 
+    if (excludeOffshore && isOffshoreMarineObservation(r)) {
+      excludedOffshoreCount += 1;
+      continue;
+    }
+
     matching.push(r);
   }
 
@@ -373,6 +383,7 @@ export function queryLiveFirmsViewport(params: ViewportHotspotsQuery): ViewportH
     return {
       items: matching,
       totalInViewport,
+      excludedOffshoreCount,
       sampled: false,
     };
   }
@@ -435,6 +446,7 @@ export function queryLiveFirmsViewport(params: ViewportHotspotsQuery): ViewportH
   return {
     items: selected,
     totalInViewport,
+    excludedOffshoreCount,
     sampled: true,
   };
 }

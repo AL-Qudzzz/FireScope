@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   AlertTriangle,
   Calendar as CalendarIcon,
+  History,
   Info,
 } from 'lucide-react';
 import {
@@ -19,6 +20,9 @@ interface CalendarHeatmapProps {
   onChangeSensor: (s: SensorFilter) => void;
   onChangeMetric: (m: 'detection_count' | 'frp_mw') => void;
   onApplyDatePreset: (startDate: string, endDate: string, granularity: Granularity) => void;
+  onOpenCompareHistory?: () => void;
+  liveMinDate?: string;
+  liveMaxDate?: string;
 }
 
 export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
@@ -29,6 +33,9 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
   onChangeSensor,
   onChangeMetric,
   onApplyDatePreset,
+  onOpenCompareHistory,
+  liveMinDate = '2026-11-12',
+  liveMaxDate = '2026-11-13',
 }) => {
   const [hoveredBin, setHoveredBin] = useState<CalendarBinRecord | null>(null);
 
@@ -90,12 +97,14 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
         {/* Granularity, Sensor Mode & Metric Controls */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Quick Window Presets */}
-          <div className="flex items-center bg-[var(--app-bg)] p-0.5 rounded-[6px] border border-[var(--border-subtle)] text-[11px]">
+          <div className="flex flex-wrap items-center bg-[var(--app-bg)] p-0.5 rounded-[6px] border border-[var(--border-subtle)] text-[11px]">
             <button
               type="button"
-              onClick={() => onApplyDatePreset('2026-11-12', '2026-11-13', 'day')}
+              onClick={() => onApplyDatePreset(liveMinDate, liveMaxDate, 'day')}
               className={`px-2 py-1 rounded font-medium transition-colors ${
-                query.granularity === 'day' && query.start_date === '2026-11-12'
+                query.granularity === 'day' &&
+                query.start_date === liveMinDate &&
+                query.end_date === liveMaxDate
                   ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
@@ -104,27 +113,71 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => onApplyDatePreset('2024-01-01', '2026-11-13', 'month')}
+              onClick={() => onApplyDatePreset('2026-10-15', liveMaxDate, 'day')}
               className={`px-2 py-1 rounded font-medium transition-colors ${
-                query.granularity === 'month' && query.start_date === '2024-01-01'
-                  ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              2024–2026 Monthly
-            </button>
-            <button
-              type="button"
-              onClick={() => onApplyDatePreset('2026-10-15', '2026-11-13', 'day')}
-              className={`px-2 py-1 rounded font-medium transition-colors ${
-                query.granularity === 'day' && query.start_date === '2026-10-15'
+                query.granularity === 'day' &&
+                query.start_date === '2026-10-15' &&
+                query.end_date === liveMaxDate
                   ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
               Oct–Nov 2026 Daily
             </button>
+            <button
+              type="button"
+              onClick={() => onApplyDatePreset('2024-01-01', liveMaxDate, 'month')}
+              className={`px-2 py-1 rounded font-medium transition-colors ${
+                query.granularity === 'month' &&
+                query.start_date === '2024-01-01' &&
+                query.end_date === liveMaxDate
+                  ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              2024–2026 Monthly
+            </button>
+            {analytics.aoi.bbox.east >= 95 &&
+              analytics.aoi.bbox.west <= 141 &&
+              analytics.aoi.bbox.north >= -11.1 &&
+              analytics.aoi.bbox.south <= 6.0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onApplyDatePreset('2023-01-01', '2023-12-31', 'month')}
+                    className={`px-2 py-1 rounded font-medium transition-colors ${
+                      query.granularity === 'month' && query.start_date === '2023-01-01'
+                        ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    2023 El Niño
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onApplyDatePreset('2015-01-01', '2015-12-31', 'month')}
+                    className={`px-2 py-1 rounded font-medium transition-colors ${
+                      query.granularity === 'month' && query.start_date === '2015-01-01'
+                        ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    2015 El Niño
+                  </button>
+                </>
+              )}
           </div>
+
+          {onOpenCompareHistory && (
+            <button
+              type="button"
+              onClick={onOpenCompareHistory}
+              className="h-7 px-2.5 rounded-[6px] bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[11px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <History className="w-3.5 h-3.5 text-[var(--ember)]" />
+              <span>Compare History</span>
+            </button>
+          )}
 
           {/* Granularity Selector */}
           <div

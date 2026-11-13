@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -19,6 +19,7 @@ interface SelectedBinDetailProps {
   analytics: CalendarAnalyticsResponse;
   selectedBin: CalendarBinRecord;
   binObservations: CanonicalObservation[];
+  totalMatchingObservations?: number;
   selectedObservationId: string | null;
   onSelectObservation: (obs: CanonicalObservation) => void;
   onOpenMethodology: () => void;
@@ -29,6 +30,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
   analytics,
   selectedBin,
   binObservations,
+  totalMatchingObservations,
   selectedObservationId,
   onSelectObservation,
   onOpenMethodology,
@@ -36,6 +38,10 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
 }) => {
   const [page, setPage] = useState(0);
   const pageSize = 8;
+
+  useEffect(() => {
+    setPage(0);
+  }, [selectedBin.bin_key]);
 
   const totalPages = Math.max(1, Math.ceil(binObservations.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
@@ -168,8 +174,25 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
               <div className="text-[#FFB454] font-semibold">MODIS FRP (MW)</div>
               <div>Sum: {modisFrp.sum_mw !== null ? `${modisFrp.sum_mw} MW` : 'N/A'}</div>
               <div>Mean: {modisFrp.mean_mw !== null ? `${modisFrp.mean_mw} MW` : 'N/A'}</div>
-              <div>Median: {modisFrp.median_mw !== null ? `${modisFrp.median_mw} MW` : 'N/A'}</div>
-              <div>P90: {modisFrp.p90_mw !== null ? `${modisFrp.p90_mw} MW` : 'N/A'}</div>
+              <div>
+                Median:{' '}
+                {modisFrp.median_mw !== null
+                  ? `${modisFrp.median_mw} MW`
+                  : modisFrp.valid_count > 0
+                  ? 'N/A (daily agg)'
+                  : 'N/A'}
+              </div>
+              <div>
+                P90:{' '}
+                {modisFrp.p90_mw !== null
+                  ? `${modisFrp.p90_mw} MW`
+                  : modisFrp.valid_count > 0
+                  ? 'N/A (daily agg)'
+                  : 'N/A'}
+              </div>
+              {modisFrp.max_mw !== null && modisFrp.max_mw !== undefined && (
+                <div>Max: {modisFrp.max_mw} MW</div>
+              )}
               <div className="text-[10px] text-[var(--text-muted)] pt-1 border-t border-[var(--border-subtle)]">
                 Valid: {modisFrp.valid_count} · Null: {modisFrp.null_count}
               </div>
@@ -179,8 +202,25 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
               <div className="text-[#61BDE0] font-semibold">VIIRS FRP (MW)</div>
               <div>Sum: {viirsFrp.sum_mw !== null ? `${viirsFrp.sum_mw} MW` : 'N/A'}</div>
               <div>Mean: {viirsFrp.mean_mw !== null ? `${viirsFrp.mean_mw} MW` : 'N/A'}</div>
-              <div>Median: {viirsFrp.median_mw !== null ? `${viirsFrp.median_mw} MW` : 'N/A'}</div>
-              <div>P90: {viirsFrp.p90_mw !== null ? `${viirsFrp.p90_mw} MW` : 'N/A'}</div>
+              <div>
+                Median:{' '}
+                {viirsFrp.median_mw !== null
+                  ? `${viirsFrp.median_mw} MW`
+                  : viirsFrp.valid_count > 0
+                  ? 'N/A (daily agg)'
+                  : 'N/A'}
+              </div>
+              <div>
+                P90:{' '}
+                {viirsFrp.p90_mw !== null
+                  ? `${viirsFrp.p90_mw} MW`
+                  : viirsFrp.valid_count > 0
+                  ? 'N/A (daily agg)'
+                  : 'N/A'}
+              </div>
+              {viirsFrp.max_mw !== null && viirsFrp.max_mw !== undefined && (
+                <div>Max: {viirsFrp.max_mw} MW</div>
+              )}
               <div className="text-[10px] text-[var(--text-muted)] pt-1 border-t border-[var(--border-subtle)]">
                 Valid: {viirsFrp.valid_count} · Null: {viirsFrp.null_count}
               </div>
@@ -216,31 +256,49 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
             </div>
           </div>
 
-          {selectedBin.seasonal_baseline && (
-            <div className="space-y-1.5 text-[11px]">
-              <div className="font-medium text-[var(--text-primary)]">
-                Historical Baseline Comparison (2024–2026)
-              </div>
-              <div className="font-mono text-[var(--text-secondary)]">
-                MODIS: {selectedBin.seasonal_baseline.MODIS.status_label} (median{' '}
-                {selectedBin.seasonal_baseline.MODIS.baseline_median}, MAD{' '}
-                {selectedBin.seasonal_baseline.MODIS.baseline_mad}
-                {selectedBin.seasonal_baseline.MODIS.robust_z !== null
-                  ? `, z*=${selectedBin.seasonal_baseline.MODIS.robust_z}`
-                  : ', MAD=0 fallback'}
-                )
-              </div>
-              <div className="font-mono text-[var(--text-secondary)]">
-                VIIRS: {selectedBin.seasonal_baseline.VIIRS.status_label} (median{' '}
-                {selectedBin.seasonal_baseline.VIIRS.baseline_median}, MAD{' '}
-                {selectedBin.seasonal_baseline.VIIRS.baseline_mad}
-                {selectedBin.seasonal_baseline.VIIRS.robust_z !== null
-                  ? `, z*=${selectedBin.seasonal_baseline.VIIRS.robust_z}`
-                  : ', MAD=0 fallback'}
-                )
-              </div>
-            </div>
-          )}
+          {selectedBin.seasonal_baseline &&
+            (() => {
+              const modisYears = selectedBin.seasonal_baseline.MODIS.baseline_years;
+              const viirsYears = selectedBin.seasonal_baseline.VIIRS.baseline_years;
+              const allYears = Array.from(new Set([...modisYears, ...viirsYears]));
+              const heading =
+                allYears.length > 0
+                  ? `Historical Baseline (${Math.min(...allYears)}–${Math.max(...allYears)}, ${allYears.length} yr)`
+                  : 'Within-Window / Baseline Status';
+              const formatSensorBaseline = (
+                label: string,
+                stat: NonNullable<CalendarBinRecord['seasonal_baseline']>['MODIS']
+              ) => {
+                if (
+                  stat.baseline_years.length === 0 ||
+                  stat.status_label === 'Baseline unavailable (insufficient history)'
+                ) {
+                  return `${label}: ${stat.status_label}`;
+                }
+                return `${label}: ${stat.status_label} (median ${stat.baseline_median}, MAD ${stat.baseline_mad}${
+                  stat.robust_z !== null ? `, z*=${stat.robust_z}` : ', MAD=0 fallback'
+                })`;
+              };
+              const caveatText =
+                selectedBin.seasonal_baseline.VIIRS.caveat_note ||
+                selectedBin.seasonal_baseline.MODIS.caveat_note;
+              return (
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="font-medium text-[var(--text-primary)]">{heading}</div>
+                  <div className="font-mono text-[var(--text-secondary)]">
+                    {formatSensorBaseline('MODIS', selectedBin.seasonal_baseline.MODIS)}
+                  </div>
+                  <div className="font-mono text-[var(--text-secondary)]">
+                    {formatSensorBaseline('VIIRS', selectedBin.seasonal_baseline.VIIRS)}
+                  </div>
+                  {caveatText && (
+                    <div className="text-[10px] text-[var(--text-muted)] leading-snug">
+                      {caveatText}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
         </div>
       </div>
 
@@ -250,7 +308,10 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
           <div className="flex items-center gap-2">
             <FileCode2 className="w-4 h-4 text-[var(--viirs)]" />
             <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
-              Canonical Hotspot Observation Records in Bin ({binObservations.length})
+              {totalMatchingObservations !== undefined &&
+              totalMatchingObservations > binObservations.length
+                ? `Canonical Hotspot Observation Records (Showing ${binObservations.length.toLocaleString()} of ${totalMatchingObservations.toLocaleString()})`
+                : `Canonical Hotspot Observation Records in Bin (${binObservations.length.toLocaleString()})`}
             </h3>
             <span className="text-[11px] text-[var(--text-muted)]">
               Click any row to open full M0_RAW Observation Inspector

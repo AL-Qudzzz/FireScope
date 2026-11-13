@@ -174,6 +174,55 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
         </div>
       </section>
 
+      {/* Historical Parquet Archive Manifest (2001–2026, 8.91M+ Official NASA FIRMS Records) */}
+      {dataStatus.parquet_archive?.available && (
+        <section
+          aria-label="NASA FIRMS Historical Parquet Archive"
+          data-testid="parquet-archive-section"
+          className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-3"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
+                NASA FIRMS Historical Archive Engine (ZSTD Parquet · DuckDB)
+              </h2>
+              <p className="text-[12px] text-[var(--text-secondary)]">
+                Region: <strong className="text-[var(--text-primary)]">{dataStatus.parquet_archive.region_label}</strong> ·{' '}
+                Window: <span className="font-mono">{dataStatus.parquet_archive.date_range.min_date} → {dataStatus.parquet_archive.date_range.max_date}</span> ·{' '}
+                CRS: <span className="font-mono">{dataStatus.parquet_archive.crs}</span> ({dataStatus.parquet_archive.spatial_grid_resolution_deg}° grid)
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+              <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--success)]/45 text-[var(--success)] font-semibold">
+                {dataStatus.parquet_archive.canonical_rows_total.toLocaleString()} Canonical Rows
+              </span>
+              <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
+                daily_aggregates.parquet ({(dataStatus.parquet_archive.daily_aggregates_parquet.bytes / (1024 * 1024)).toFixed(1)} MB)
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 text-[11px] font-mono">
+            {dataStatus.parquet_archive.platform_coverage.map((pc) => (
+              <div
+                key={pc.platform}
+                className="p-2.5 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] space-y-0.5"
+              >
+                <div className="font-semibold text-[var(--text-primary)]">
+                  {pc.platform} ({pc.sensor})
+                </div>
+                <div className="text-[var(--text-secondary)]">
+                  {pc.first_date} → {pc.last_date}
+                </div>
+                <div className="text-[var(--ember)] font-semibold">
+                  {pc.canonical_count.toLocaleString()} det
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Immutable Raw Archive Manifest (SHA-256) */}
       <section className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-3">
         <div className="flex items-center gap-2">
@@ -200,6 +249,26 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)] font-mono text-[11px]">
+              {(dataStatus.parquet_archive?.source_files ?? []).map((sf) => (
+                <tr key={sf.file_id} className="hover:bg-[var(--surface-2)]/60 bg-[var(--app-bg)]/40">
+                  <td className="py-2 px-3 text-[var(--text-primary)]">
+                    {sf.zip_filename} → {sf.filename}
+                  </td>
+                  <td className="py-2 px-3 text-[var(--text-secondary)]">
+                    {sf.source_product} ({sf.collection})
+                  </td>
+                  <td className="py-2 px-3 text-[var(--text-primary)]">{sf.platforms.join(', ')}</td>
+                  <td className="py-2 px-3 text-[var(--text-secondary)]">
+                    {sf.processing_status}
+                  </td>
+                  <td className="py-2 px-3 text-right text-[var(--success)] font-semibold tabular-nums">
+                    {sf.row_count.toLocaleString()}
+                  </td>
+                  <td className="py-2 px-3 text-[var(--text-muted)]">
+                    {sf.sha256_checksum.slice(0, 24)}…
+                  </td>
+                </tr>
+              ))}
               {dataStatus.raw_archive_manifest.map((m) => (
                 <tr key={m.file_id} className="hover:bg-[var(--surface-2)]/60">
                   <td className="py-2 px-3 text-[var(--text-primary)]">{m.filename}</td>
@@ -420,8 +489,10 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
             <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--success)]/45 font-mono text-[11px] font-semibold text-[var(--success)]">
               ● LIVE NASA FIRMS ({dataStatus?.live_firms_count ? `${dataStatus.live_firms_count.toLocaleString()} detections / 24h` : 'Active'})
             </span>
-            <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--warning)]/45 font-mono text-[11px] font-semibold text-[var(--warning)]">
-              ARCHIVE BASELINE (2024–2026-11-11)
+            <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--viirs)]/45 font-mono text-[11px] font-semibold text-[var(--viirs)]">
+              {dataStatus?.parquet_archive?.available
+                ? `PARQUET ARCHIVE (2001–2026 · ${(dataStatus.parquet_archive.canonical_rows_total / 1_000_000).toFixed(2)}M NASA ROWS)`
+                : 'ARCHIVE BASELINE (2024–2026-11-11)'}
             </span>
           </div>
         </div>
@@ -464,18 +535,18 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
 
         <p>
           <strong className="text-[var(--text-primary)]">
-            2. Dukungan Opsional FIRMS MAP_KEY &amp; Archive Historical Baseline:
+            2. NASA FIRMS Historical Parquet Engine (FR-08) &amp; Demo Baseline Boundary:
           </strong>{' '}
-          Server FireScope juga mendukung environment variable{' '}
-          <code className="font-mono text-[11px] text-[var(--text-primary)]">FIRMS_MAP_KEY</code>{' '}
-          (status saat ini:{' '}
-          <strong className="font-mono text-[var(--text-primary)]">
-            {dataStatus?.firms_map_key_configured ? 'Configured' : 'Open Data CSV Mode (No Key Required)'}
-          </strong>
-          ) untuk kueri Area API historis 1–5 hari. Untuk rentang analisis multi-tahun (2024–2026-11-11),
-          FireScope menggunakan snapshot arsip historis terpisah (sebelumnya berlabel{' '}
-          <code className="font-mono text-[11px] text-[var(--warning)]">DEMO DATA</code>) dan
-          tidak mencampurkannya ke peta deteksi NASA FIRMS real-time.
+          Untuk wilayah Indonesia (2001–2026), fitur perbandingan historis{' '}
+          <code className="font-mono text-[11px] text-[var(--text-primary)]">FR-08</code> dan
+          kalender multi-tahun dikueri langsung via DuckDB dari{' '}
+          <code className="font-mono text-[11px] text-[var(--text-primary)]">daily_aggregates.parquet</code>{' '}
+          yang dibangun dari arsip resmi NASA FIRMS (MODIS C6.1, VIIRS S-NPP, NOAA-20, NOAA-21)
+          dengan deduplikasi eksak dan pembatasan tanggal agar tidak terjadi penghitungan ganda
+          dengan feed live 24 jam. Untuk AOI di luar cakupan file Parquet, FireScope secara eksplisit
+          menampilkan label{' '}
+          <code className="font-mono text-[11px] text-[var(--warning)]">DEMO_FIXTURE_BASELINE</code>{' '}
+          dan tidak menyamarkannya sebagai observasi NASA.
         </p>
       </div>
 

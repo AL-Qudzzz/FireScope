@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Bookmark,
   Camera,
   Check,
   ChevronLeft,
@@ -9,7 +10,9 @@ import {
   Info,
   Layers,
   Pause,
+  Pencil,
   Play,
+  RefreshCw,
   Ruler,
   Search,
   Share2,
@@ -21,13 +24,16 @@ import {
 } from 'lucide-react';
 import {
   AoiDefinition,
+  AutoRefreshIntervalMs,
   BoundingBox,
   CalendarBinRecord,
   GeoPoint,
   Granularity,
+  MapDisplayMode,
   PlatformId,
   PlatformRegistryEntry,
   ProcessingStatus,
+  SavedAoiRecord,
   SensorFilter,
   SharedQueryState,
 } from '../types/firescope';
@@ -152,21 +158,33 @@ export const MapToolDock: React.FC<MapToolDockProps> = ({
 
 interface AoiSearchPanelProps {
   activeAoi: AoiDefinition;
+  savedAois: SavedAoiRecord[];
   onSelectPresetAoi: (aoiId: string) => void;
+  onSelectSavedAoi: (aoi: AoiDefinition) => void;
+  onSaveCurrentAoi: (customLabel?: string) => void;
+  onRenameSavedAoi: (aoiId: string, newName: string) => void;
+  onDeleteSavedAoi: (aoiId: string) => void;
   onApplyCustomAoi: (aoi: AoiDefinition) => void;
   interactionMode: ActiveMapInteractionMode;
   onSetInteractionMode: (mode: ActiveMapInteractionMode) => void;
   onOpenAnalysis: () => void;
+  onOpenPeriodCompare?: () => void;
   onClose: () => void;
 }
 
 export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
   activeAoi,
+  savedAois,
   onSelectPresetAoi,
+  onSelectSavedAoi,
+  onSaveCurrentAoi,
+  onRenameSavedAoi,
+  onDeleteSavedAoi,
   onApplyCustomAoi,
   interactionMode,
   onSetInteractionMode,
   onOpenAnalysis,
+  onOpenPeriodCompare,
   onClose,
 }) => {
   const [tab, setTab] = useState<'search' | 'coordinates' | 'draw'>('search');
@@ -176,6 +194,9 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
   const [eastInput, setEastInput] = useState(String(activeAoi.bbox.east));
   const [northInput, setNorthInput] = useState(String(activeAoi.bbox.north));
   const [customName, setCustomName] = useState('');
+  const [saveLabel, setSaveLabel] = useState('');
+  const [editingSavedId, setEditingSavedId] = useState<string | null>(null);
+  const [editingSavedText, setEditingSavedText] = useState('');
   const [coordError, setCoordError] = useState<string | null>(null);
 
   const filteredPresets = PRESET_AOIS.filter(
@@ -305,6 +326,93 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
                 </button>
               )}
             </div>
+
+            {/* P2 Persistent Personal Saved AOIs */}
+            {savedAois.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <div className="text-[11px] font-medium text-[var(--ember)] flex items-center gap-1.5">
+                  <Bookmark className="w-3 h-3" />
+                  <span>Saved AOIs ({savedAois.length})</span>
+                </div>
+                {savedAois.map((rec) => {
+                  const isSelected = rec.aoi.id === activeAoi.id;
+                  const isEditing = editingSavedId === rec.aoi.id;
+                  return (
+                    <div
+                      key={rec.aoi.id}
+                      className={`p-2 rounded-[6px] border ${
+                        isSelected
+                          ? 'bg-[var(--surface-2)] border-[var(--ember)]'
+                          : 'bg-[var(--app-bg)]/60 border-[var(--border-subtle)]'
+                      }`}
+                    >
+                      {isEditing ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            onRenameSavedAoi(rec.aoi.id, editingSavedText);
+                            setEditingSavedId(null);
+                          }}
+                          className="flex items-center gap-1.5"
+                        >
+                          <input
+                            type="text"
+                            value={editingSavedText}
+                            onChange={(e) => setEditingSavedText(e.target.value)}
+                            aria-label={`Rename ${rec.aoi.name}`}
+                            className="flex-1 h-7 px-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)]"
+                          />
+                          <button
+                            type="submit"
+                            className="px-2 h-7 rounded bg-[var(--ember)] text-white text-[11px] font-medium"
+                          >
+                            Save
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="flex items-start justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onSelectSavedAoi(rec.aoi)}
+                            className="flex-1 text-left min-w-0"
+                          >
+                            <div className="text-[12px] font-medium text-[var(--text-primary)] truncate">
+                              {rec.aoi.name}
+                            </div>
+                            <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                              {rec.aoi.areaSqKm.toLocaleString()} km² · [{rec.aoi.bbox.west.toFixed(2)},{' '}
+                              {rec.aoi.bbox.south.toFixed(2)}..{rec.aoi.bbox.east.toFixed(2)},{' '}
+                              {rec.aoi.bbox.north.toFixed(2)}]
+                            </div>
+                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingSavedId(rec.aoi.id);
+                                setEditingSavedText(rec.aoi.name);
+                              }}
+                              aria-label={`Rename saved AOI ${rec.aoi.name}`}
+                              className="w-6 h-6 rounded flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)]"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDeleteSavedAoi(rec.aoi.id)}
+                              aria-label={`Delete saved AOI ${rec.aoi.name}`}
+                              className="w-6 h-6 rounded flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--surface-3)]"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="space-y-1.5">
               {filteredPresets.map((aoi) => {
@@ -475,7 +583,7 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
           <div className="text-[11px] font-medium text-[var(--text-muted)]">
             Selected Area Summary
           </div>
-          <div className="p-2.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-1">
+          <div className="p-2.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-1.5">
             <div className="text-[12px] font-semibold text-[var(--text-primary)]">
               {activeAoi.name}
             </div>
@@ -488,15 +596,49 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
               Geometric extent: ~{activeAoi.areaSqKm.toLocaleString()} km² · Timezone:{' '}
               {activeAoi.timezone}
             </div>
+            {activeAoi.id !== 'global-world' && (
+              <div className="flex items-center gap-1.5 pt-1 border-t border-[var(--border-subtle)]">
+                <input
+                  type="text"
+                  value={saveLabel}
+                  onChange={(e) => setSaveLabel(e.target.value)}
+                  placeholder="Optional saved AOI label..."
+                  aria-label="Label for saved AOI"
+                  className="flex-1 h-7 px-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSaveCurrentAoi(saveLabel || undefined);
+                    setSaveLabel('');
+                  }}
+                  className="h-7 px-2.5 rounded bg-[var(--surface-3)] hover:bg-[var(--ember)] text-[11px] font-medium text-[var(--text-primary)] hover:text-white flex items-center gap-1 shrink-0"
+                >
+                  <Bookmark className="w-3 h-3" />
+                  <span>Save AOI</span>
+                </button>
+              </div>
+            )}
           </div>
 
-          <button
-            type="button"
-            onClick={onOpenAnalysis}
-            className="w-full h-9 rounded-[6px] bg-[var(--ember)] hover:bg-[var(--ember-hover)] text-white text-[13px] font-semibold transition-colors shadow-xs"
-          >
-            Analyze Area in Burning-Activity Calendar
-          </button>
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={onOpenAnalysis}
+              className="w-full h-9 rounded-[6px] bg-[var(--ember)] hover:bg-[var(--ember-hover)] text-white text-[13px] font-semibold transition-colors shadow-xs"
+            >
+              Open Activity Calendar
+            </button>
+            {onOpenPeriodCompare && (
+              <button
+                type="button"
+                onClick={onOpenPeriodCompare}
+                className="w-full h-8 rounded-[6px] bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[12px] font-medium text-[var(--text-primary)] transition-colors"
+              >
+                Compare Historical Years (2001–2026)
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </section>
@@ -676,6 +818,13 @@ interface LayerDrawerProps {
   onUpdateOverlays: (patch: Partial<MapOverlaySettings>) => void;
   basemap: BasemapStyle;
   onChangeBasemap: (style: BasemapStyle) => void;
+  mapDisplayMode: MapDisplayMode;
+  onChangeMapDisplayMode: (mode: MapDisplayMode) => void;
+  gridResolutionDeg: 0.25 | 0.5 | 1.0 | 2.0;
+  onChangeGridResolutionDeg: (deg: 0.25 | 0.5 | 1.0 | 2.0) => void;
+  autoRefreshMs: AutoRefreshIntervalMs;
+  onChangeAutoRefreshMs: (ms: AutoRefreshIntervalMs) => void;
+  onManualRefresh: () => void;
 }
 
 export const LayerDrawer: React.FC<LayerDrawerProps> = ({
@@ -688,6 +837,13 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
   onUpdateOverlays,
   basemap,
   onChangeBasemap,
+  mapDisplayMode,
+  onChangeMapDisplayMode,
+  gridResolutionDeg,
+  onChangeGridResolutionDeg,
+  autoRefreshMs,
+  onChangeAutoRefreshMs,
+  onManualRefresh,
 }) => {
   if (!isOpen) return null;
 
@@ -845,6 +1001,25 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
               );
             })}
           </div>
+
+          <label className="flex items-start justify-between gap-2.5 p-2.5 rounded-[6px] bg-[var(--surface-2)]/70 hover:bg-[var(--surface-2)] border border-[var(--border-subtle)] cursor-pointer">
+            <div>
+              <div className="text-[12px] font-medium text-[var(--text-primary)]">
+                Exclude Offshore Oil/Gas Flares &amp; Sea Anomalies
+              </div>
+              <div className="text-[10px] text-[var(--text-muted)] leading-snug mt-0.5">
+                Hides NASA FIRMS type=3 &amp; verified offshore rig flares (Natuna, Sarawak, Java
+                Sea, Timor Sea, North Sea, Persian Gulf, etc.) without mutating raw NASA files.
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={queryState.excludeOffshore}
+              onChange={(e) => onUpdateQueryState({ excludeOffshore: e.target.checked })}
+              aria-label="Exclude offshore oil and gas flares"
+              className="mt-0.5 accent-[var(--ember)] shrink-0"
+            />
+          </label>
         </div>
 
         {/* Analyst Mode Native Filters (Never conflating MODIS and VIIRS confidence!) */}
@@ -927,6 +1102,10 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
                 aria-label="Minimum MODIS numeric confidence"
                 className="w-full accent-[var(--modis)]"
               />
+              <div className="text-[10px] text-[var(--text-muted)] mt-1">
+                Note: Historical Parquet daily bins group confidence into &lt;30, ≥30, ≥80 buckets;
+                live/raw views filter exact 0–100 values.
+              </div>
             </div>
 
             {/* VIIRS Native Categorical Confidence (low / nominal / high) */}
@@ -967,16 +1146,24 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
           </div>
         )}
 
-        {/* Group B — Map Overlays */}
+        {/* Group B — Map & Contextual Overlays (P2 Verifiable Only) */}
         <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
           <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">
-            Group B · Cartographic Overlays
+            Group B · Cartographic &amp; Contextual Overlays
           </h3>
           <div className="space-y-1.5 text-[12px]">
             {[
               {
                 key: 'pixelFootprints' as const,
                 label: 'Pixel Footprint Geometry (scan × track)',
+              },
+              {
+                key: 'solarTerminator' as const,
+                label: 'Solar Day/Night Terminator (Live UTC)',
+              },
+              {
+                key: 'terrainHillshade' as const,
+                label: 'Elevation Terrain Hillshade (Esri DEM)',
               },
               {
                 key: 'graticuleGrid' as const,
@@ -1005,12 +1192,61 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
               </label>
             ))}
           </div>
+
+          {/* P1 Spatial Grid / Clustering Layer Mode */}
+          <div className="p-2.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-2">
+            <div className="flex items-center justify-between text-[12px]">
+              <span className="font-medium text-[var(--text-primary)]">
+                Spatial Display Aggregation
+              </span>
+              <span className="text-[10px] font-mono text-[var(--text-muted)]">
+                {mapDisplayMode.toUpperCase()}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1 text-[11px] font-mono">
+              {(['points', 'grid', 'cluster'] as MapDisplayMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => onChangeMapDisplayMode(mode)}
+                  className={`py-1 rounded capitalize border ${
+                    mapDisplayMode === mode
+                      ? 'bg-[var(--ember)] border-[var(--ember)] text-white font-semibold'
+                      : 'bg-[var(--app-bg)] border-[var(--border-subtle)] text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+            {(mapDisplayMode === 'grid' || mapDisplayMode === 'cluster') && (
+              <div className="flex items-center justify-between gap-2 text-[11px] pt-1 border-t border-[var(--border-subtle)]">
+                <span className="text-[var(--text-secondary)]">Grid Resolution</span>
+                <div className="flex items-center gap-1 font-mono">
+                  {([0.25, 0.5, 1.0, 2.0] as const).map((deg) => (
+                    <button
+                      key={deg}
+                      type="button"
+                      onClick={() => onChangeGridResolutionDeg(deg)}
+                      className={`px-1.5 py-0.5 rounded ${
+                        gridResolutionDeg === deg
+                          ? 'bg-[var(--surface-3)] text-[var(--ember)] font-semibold'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {deg}°
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Group C — Basemap Imagery */}
+        {/* Group C — Basemap & Auto-Refresh (P2) */}
         <div className="space-y-2 pt-2 border-t border-[var(--border-subtle)]">
           <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">
-            Group C · OpenStreetMap &amp; Satellite Basemap
+            Group C · OpenStreetMap, Satellite &amp; Auto-Refresh
           </h3>
           <div className="grid grid-cols-3 gap-1.5 text-[12px]">
             {(
@@ -1034,6 +1270,46 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
               </button>
             ))}
           </div>
+
+          <div className="p-2.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] flex items-center justify-between gap-2 text-[11px]">
+            <div>
+              <div className="font-medium text-[var(--text-primary)]">Live Feed Auto-Refresh</div>
+              <div className="text-[10px] text-[var(--text-muted)]">
+                Syncs /api/v1/data/status &amp; active view
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              {(
+                [
+                  { ms: 0 as AutoRefreshIntervalMs, label: 'Off' },
+                  { ms: 300000 as AutoRefreshIntervalMs, label: '5m' },
+                  { ms: 600000 as AutoRefreshIntervalMs, label: '10m' },
+                ]
+              ).map((opt) => (
+                <button
+                  key={opt.ms}
+                  type="button"
+                  onClick={() => onChangeAutoRefreshMs(opt.ms)}
+                  className={`px-2 py-1 rounded font-mono ${
+                    autoRefreshMs === opt.ms
+                      ? 'bg-[var(--ember)] text-white font-semibold'
+                      : 'bg-[var(--app-bg)] text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={onManualRefresh}
+                aria-label="Refresh live NASA FIRMS data now"
+                title="Refresh now"
+                className="w-7 h-7 rounded bg-[var(--app-bg)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--text-primary)] border border-[var(--border-subtle)]"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1048,6 +1324,7 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
               dayNight: 'ALL',
               modisMinConfidence: 0,
               viirsCategories: ['low', 'nominal', 'high'],
+              excludeOffshore: true,
             })
           }
           className="text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline"
@@ -1069,6 +1346,8 @@ interface TimelineTrayProps {
   onUpdateQueryState: (patch: Partial<SharedQueryState>) => void;
   series: CalendarBinRecord[];
   onOpenCalendarAnalysis: () => void;
+  liveMinDate?: string;
+  liveMaxDate?: string;
 }
 
 export const TimelineTray: React.FC<TimelineTrayProps> = ({
@@ -1078,6 +1357,8 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
   onUpdateQueryState,
   series,
   onOpenCalendarAnalysis,
+  liveMinDate = '2026-11-12',
+  liveMaxDate = '2026-11-13',
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -1092,26 +1373,32 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
   const presets = [
     {
       label: 'TODAY (UTC Live)',
-      startDate: '2026-11-13',
-      endDate: '2026-11-13',
+      startDate: liveMaxDate,
+      endDate: liveMaxDate,
       granularity: 'day' as Granularity,
     },
     {
       label: '24HRS (Live NASA FIRMS)',
-      startDate: '2026-11-12',
-      endDate: '2026-11-13',
+      startDate: liveMinDate,
+      endDate: liveMaxDate,
       granularity: 'day' as Granularity,
     },
     {
       label: 'Oct–Nov 2026 Daily',
       startDate: '2026-10-15',
-      endDate: '2026-11-13',
+      endDate: liveMaxDate,
       granularity: 'day' as Granularity,
     },
     {
       label: '2024–2026 Monthly',
       startDate: '2024-01-01',
-      endDate: '2026-11-13',
+      endDate: liveMaxDate,
+      granularity: 'month' as Granularity,
+    },
+    {
+      label: '2015 El Niño (Monthly)',
+      startDate: '2015-01-01',
+      endDate: '2015-12-31',
       granularity: 'month' as Granularity,
     },
   ];
@@ -1164,7 +1451,7 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
             <input
               type="date"
               value={queryState.startDate}
-              min="2024-01-01"
+              min="2001-01-01"
               max={queryState.endDate}
               onChange={(e) =>
                 e.target.value && onUpdateQueryState({ startDate: e.target.value })
@@ -1177,7 +1464,7 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
               type="date"
               value={queryState.endDate}
               min={queryState.startDate}
-              max="2026-11-13"
+              max={liveMaxDate}
               onChange={(e) =>
                 e.target.value && onUpdateQueryState({ endDate: e.target.value })
               }

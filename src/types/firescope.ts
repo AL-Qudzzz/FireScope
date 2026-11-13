@@ -119,6 +119,7 @@ export interface FrpSummaryStats {
   mean_mw: number | null;
   median_mw: number | null;
   p90_mw: number | null;
+  max_mw?: number | null;
   valid_count: number;
   null_count: number;
   processing_status_note: string;
@@ -255,6 +256,8 @@ export interface MapHotspotsResponse {
   total_global_24h: number;
   total_in_viewport: number;
   returned_count: number;
+  excluded_offshore_count?: number;
+  exclude_offshore?: boolean;
   sampled: boolean;
   synced_at_utc: string;
   latest_acquisition_utc: string;
@@ -270,6 +273,65 @@ export interface FirmsFeedStatusEntry {
   row_count: number;
   sha256: string;
   source_url: string;
+}
+
+export type DataSourceBacking =
+  | 'LIVE_NASA_FIRMS'
+  | 'REAL_NASA_ARCHIVE_PARQUET'
+  | 'HYBRID_PARQUET_AND_LIVE'
+  | 'DEMO_FIXTURE_BASELINE';
+
+export interface ParquetArchiveSourceFile {
+  file_id: string;
+  filename: string;
+  zip_filename: string;
+  zip_sha256: string;
+  source_url: string;
+  source_product: string;
+  sensor: SensorId;
+  collection: string;
+  processing_status: ProcessingStatus;
+  sha256_checksum: string;
+  row_count: number;
+  date_window: string;
+  platforms: PlatformId[];
+}
+
+export interface ParquetArchiveManifest {
+  available: boolean;
+  schema_version: string;
+  generated_at_utc: string;
+  spatial_grid_resolution_deg: number;
+  crs: string;
+  coverage_bbox: BoundingBox;
+  region_label: string;
+  date_range: {
+    min_date: string;
+    max_date: string;
+  };
+  raw_rows_total: number;
+  canonical_rows_total: number;
+  superseded_nrt_count: number;
+  exact_duplicates_removed: number;
+  daily_aggregates_parquet: {
+    path: string;
+    rows: number;
+    bytes: number;
+  };
+  recent_observations_parquet?: {
+    path: string;
+    min_date: string;
+    rows: number;
+    bytes: number;
+  };
+  platform_coverage: Array<{
+    platform: PlatformId;
+    sensor: SensorId;
+    first_date: string;
+    last_date: string;
+    canonical_count: number;
+  }>;
+  source_files: ParquetArchiveSourceFile[];
 }
 
 export interface DataStatusResponse {
@@ -288,6 +350,7 @@ export interface DataStatusResponse {
   live_eonet_connected?: boolean;
   live_eonet_event_count?: number;
   live_eonet_synced_at_utc?: string;
+  parquet_archive?: ParquetArchiveManifest | null;
   firms_area_api_constraints: {
     day_range_min: number;
     day_range_max: number;
@@ -298,6 +361,185 @@ export interface DataStatusResponse {
   platforms: PlatformRegistryEntry[];
   raw_archive_manifest: RawArchiveManifestEntry[];
 }
+
+export type MapDisplayMode = 'points' | 'grid' | 'cluster';
+
+export interface MapGridCell {
+  cell_id: string;
+  lat_bin: number;
+  lng_bin: number;
+  cell_size_deg: number;
+  centroid_lat: number;
+  centroid_lng: number;
+  modis_detections: number;
+  viirs_detections: number;
+  pooled_observation_count: number;
+  modis_frp_sum_mw: number;
+  viirs_frp_sum_mw: number;
+  platforms: PlatformId[];
+  source_backing: 'PARQUET' | 'LIVE' | 'MIXED';
+}
+
+export interface MapGridResponse {
+  mode: 'grid' | 'cluster';
+  cell_size_deg: number;
+  data_backing: DataSourceBacking;
+  total_detections_modis: number;
+  total_detections_viirs: number;
+  excluded_offshore_count?: number;
+  exclude_offshore?: boolean;
+  cell_count: number;
+  cells: MapGridCell[];
+  method_note: string;
+  spatial_caveat: string;
+  synced_at_utc: string;
+}
+
+export interface PeriodBinValue {
+  bin_key: string;
+  label: string;
+  modis_detections: number | null;
+  viirs_detections: number | null;
+  modis_frp_sum_mw: number | null;
+  modis_frp_mean_mw: number | null;
+  viirs_frp_sum_mw: number | null;
+  viirs_frp_mean_mw: number | null;
+  coverage_state: BinCoverageState;
+  active_platforms: PlatformId[];
+  processing_statuses: ProcessingStatus[];
+}
+
+export interface PeriodComparisonRow {
+  aligned_index: number;
+  aligned_label: string;
+  period_a: PeriodBinValue | null;
+  period_b: PeriodBinValue | null;
+  modis_delta: number | null;
+  viirs_delta: number | null;
+}
+
+export interface YoyYearSummary {
+  year: number;
+  start_date: string;
+  end_date: string;
+  modis_detections: number;
+  viirs_detections: number;
+  modis_frp_sum_mw: number | null;
+  modis_frp_mean_mw: number | null;
+  viirs_frp_sum_mw: number | null;
+  viirs_frp_mean_mw: number | null;
+  active_platforms: PlatformId[];
+  processing_statuses: ProcessingStatus[];
+  data_backing: DataSourceBacking;
+}
+
+export interface PeriodComparisonResponse {
+  aoi: {
+    id: string;
+    name: string;
+    bbox: BoundingBox;
+    timezone: string;
+    area_sq_km: number;
+  };
+  period_a: { label: string; start_date: string; end_date: string };
+  period_b: { label: string; start_date: string; end_date: string };
+  granularity: Granularity;
+  sensor: SensorFilter;
+  metric: 'detection_count' | 'frp_mw';
+  data_backing: DataSourceBacking;
+  totals: {
+    period_a_modis: number;
+    period_b_modis: number;
+    modis_delta: number;
+    modis_pct_change: number | null;
+    period_a_viirs: number;
+    period_b_viirs: number;
+    viirs_delta: number;
+    viirs_pct_change: number | null;
+    period_a_modis_frp_mean_mw: number | null;
+    period_b_modis_frp_mean_mw: number | null;
+    period_a_viirs_frp_mean_mw: number | null;
+    period_b_viirs_frp_mean_mw: number | null;
+  };
+  availability_warnings: string[];
+  aligned_series: PeriodComparisonRow[];
+  yoy_summary: YoyYearSummary[];
+  method: {
+    id: MethodLevelId;
+    version: string;
+    description: string;
+    formula: string;
+    non_claims: string[];
+  };
+  provenance: {
+    sources: string[];
+    retrieved_at_utc: string;
+    archive_checksums: string[];
+  };
+}
+
+export interface AoiComparisonSummary {
+  aoi: {
+    id: string;
+    name: string;
+    regionLabel: string;
+    bbox: BoundingBox;
+    timezone: string;
+    area_sq_km: number;
+    biome: string;
+  };
+  data_backing: DataSourceBacking;
+  modis_detections: number;
+  viirs_detections: number;
+  pooled_observation_count: number;
+  modis_per_1000_sq_km: number;
+  viirs_per_1000_sq_km: number;
+  modis_frp: FrpSummaryStats;
+  viirs_frp: FrpSummaryStats;
+  platform_totals: Record<PlatformId, number>;
+  peak_bin_label: string | null;
+  peak_bin_viirs: number | null;
+  peak_bin_modis: number | null;
+}
+
+export interface AoiComparisonResponse {
+  query: {
+    start_date: string;
+    end_date: string;
+    granularity: Granularity;
+    sensor: SensorFilter;
+    metric: 'detection_count' | 'frp_mw';
+  };
+  aoi_a: AoiComparisonSummary;
+  aoi_b: AoiComparisonSummary;
+  aligned_series: Array<{
+    bin_key: string;
+    label: string;
+    aoi_a_modis: number | null;
+    aoi_a_viirs: number | null;
+    aoi_b_modis: number | null;
+    aoi_b_viirs: number | null;
+  }>;
+  comparability_warnings: string[];
+  method: {
+    id: MethodLevelId;
+    version: string;
+    description: string;
+    caveat: string;
+  };
+  provenance: {
+    sources: string[];
+    retrieved_at_utc: string;
+    archive_checksums: string[];
+  };
+}
+
+export interface SavedAoiRecord {
+  aoi: AoiDefinition;
+  savedAtUtc: string;
+}
+
+export type AutoRefreshIntervalMs = 0 | 300000 | 600000;
 
 export interface SharedQueryState {
   aoiId: string;
@@ -311,8 +553,10 @@ export interface SharedQueryState {
   dayNight: 'ALL' | 'D' | 'N';
   modisMinConfidence: number; // 0..100 native MODIS filter
   viirsCategories: Array<'low' | 'nominal' | 'high'>; // native VIIRS filter
+  excludeOffshore: boolean; // hide verified offshore marine flares (e.g. oil/gas rigs & NASA type=3)
   calendarMetric: 'detection_count' | 'frp_mw';
   controlDensity: 'overview' | 'analyst';
   selectedBinKey: string | null;
   selectedObservationId: string | null;
 }
+

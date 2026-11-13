@@ -12,15 +12,25 @@ import {
   isPointInAoi,
 } from '../science/fireScience';
 import {
+  AoiComparisonResponse,
   AoiDefinition,
   CalendarAnalyticsResponse,
   CanonicalObservation,
   DataStatusResponse,
+  Granularity,
+  MapGridResponse,
   MapHotspotsResponse,
   PaginatedObservationsResponse,
+  PeriodComparisonResponse,
   SharedQueryState,
 } from '../types/firescope';
+import {
+  generateAoiComparisonCsv,
+  generatePeriodComparisonCsv,
+} from '../science/comparisonScience';
 import { fetchLiveEonetObservations } from './eonetLiveService';
+
+export { generateAoiComparisonCsv, generatePeriodComparisonCsv };
 
 export function getActiveAoi(state: SharedQueryState): AoiDefinition {
   if (state.customAoi && state.aoiId === state.customAoi.id) {
@@ -68,12 +78,20 @@ export async function fetchDataStatusFromApi(): Promise<DataStatusResponse> {
   return getLocalDataStatus();
 }
 
-function appendAoiParams(searchParams: URLSearchParams, state: SharedQueryState) {
-  const aoi = getActiveAoi(state);
-  if (state.customAoi && state.aoiId === state.customAoi.id) {
+function appendAoiParams(
+  searchParams: URLSearchParams,
+  state: SharedQueryState,
+  overrideAoi?: AoiDefinition
+) {
+  const aoi = overrideAoi ?? getActiveAoi(state);
+  const isBuiltInPreset = PRESET_AOIS.some((p) => p.id === aoi.id);
+  if (!isBuiltInPreset || (state.customAoi && state.aoiId === state.customAoi.id)) {
     const b = aoi.bbox;
     searchParams.set('bbox', `${b.west},${b.south},${b.east},${b.north}`);
     searchParams.set('aoi_name', aoi.name);
+    if (aoi.id) {
+      searchParams.set('aoi_id', aoi.id);
+    }
   } else {
     searchParams.set('aoi_id', aoi.id);
   }
@@ -101,6 +119,7 @@ export async function fetchMapHotspotsFromApi(params: {
   sp.set('daynight', state.dayNight);
   sp.set('modis_min_confidence', String(state.modisMinConfidence));
   sp.set('viirs_categories', state.viirsCategories.join(','));
+  sp.set('exclude_offshore', String(state.excludeOffshore));
   sp.set('max_points', zoom <= 3 ? '4500' : '6000');
 
   const res = await fetch(`/api/v1/map/hotspots?${sp.toString()}`, { signal });
@@ -108,30 +127,199 @@ export async function fetchMapHotspotsFromApi(params: {
   return (await res.json()) as MapHotspotsResponse;
 }
 
+export async function fetchMapGridFromApi(params: {
+  state: SharedQueryState;
+  bounds: { west: number; south: number; east: number; north: number };
+  mode: 'grid' | 'cluster';
+  resolutionDeg: 0.25 | 0.5 | 1.0 | 2.0;
+  signal?: AbortSignal;
+}): Promise<MapGridResponse | null> {
+  const { state, bounds, mode, resolutionDeg, signal } = params;
+  const normalizeLng = (lng: number) => ((((lng + 180) % 360) + 360) % 360) - 180;
+  const fullWorldSpan = bounds.east - bounds.west >= 359;
+  let normW = fullWorldSpan ? -180 : normalizeLng(bounds.west);
+  let normE = fullWorldSpan ? 180 : normalizeLng(bounds.east);
+  if (normW > normE) {
+    // Viewport crosses antimeridian; query full longitude range cleanly
+    normW = -180;
+    normE = 180;
+  }
+
+  const sp = new URLSearchParams();
+  appendAoiParams(sp, state);
+  sp.set('west', normW.toFixed(4));
+  sp.set('south', Math.max(-85, bounds.south).toFixed(4));
+  sp.set('east', normE.toFixed(4));
+  sp.set('north', Math.min(85, bounds.north).toFixed(4));
+  sp.set('mode', mode);
+  sp.set('resolution_deg', String(resolutionDeg));
+  sp.set('start_date', state.startDate);
+  sp.set('end_date', state.endDate);
+  sp.set('sensor', state.sensor);
+  sp.set('platforms', state.platforms.join(','));
+  sp.set('processing_status', state.processingStatus);
+  sp.set('daynight', state.dayNight);
+  sp.set('modis_min_confidence', String(state.modisMinConfidence));
+  sp.set('viirs_categories', state.viirsCategories.join(','));
+  sp.set('exclude_offshore', String(state.excludeOffshore));
+
+  const res = await fetch(`/api/v1/map/grid?${sp.toString()}`, { signal });
+  if (!res.ok) return null;
+  return (await res.json()) as MapGridResponse;
+}
+
 export async function fetchCalendarAnalyticsFromApi(
   state: SharedQueryState,
   signal?: AbortSignal
 ): Promise<CalendarAnalyticsResponse | null> {
-  try {
-    const sp = new URLSearchParams();
-    appendAoiParams(sp, state);
-    sp.set('start_date', state.startDate);
-    sp.set('end_date', state.endDate);
-    sp.set('granularity', state.granularity);
-    sp.set('sensor', state.sensor);
-    sp.set('metric', state.calendarMetric);
-    sp.set('platforms', state.platforms.join(','));
-    sp.set('processing_status', state.processingStatus);
-    sp.set('daynight', state.dayNight);
-    sp.set('modis_min_confidence', String(state.modisMinConfidence));
-    sp.set('viirs_categories', state.viirsCategories.join(','));
+  const sp = new URLSearchParams();
+  appendAoiParams(sp, state);
+  sp.set('start_date', state.startDate);
+  sp.set('end_date', state.endDate);
+  sp.set('granularity', state.granularity);
+  sp.set('sensor', state.sensor);
+  sp.set('metric', state.calendarMetric);
+  sp.set('platforms', state.platforms.join(','));
+  sp.set('processing_status', state.processingStatus);
+  sp.set('daynight', state.dayNight);
+  sp.set('modis_min_confidence', String(state.modisMinConfidence));
+  sp.set('viirs_categories', state.viirsCategories.join(','));
 
-    const res = await fetch(`/api/v1/analytics/calendar?${sp.toString()}`, { signal });
-    if (!res.ok) return null;
-    return (await res.json()) as CalendarAnalyticsResponse;
-  } catch {
-    return null;
+  const res = await fetch(`/api/v1/analytics/calendar?${sp.toString()}`, { signal });
+  if (!res.ok) {
+    let msg = `Calendar API error (HTTP ${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) msg = body.error.message;
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(msg);
   }
+  return (await res.json()) as CalendarAnalyticsResponse;
+}
+
+export async function fetchPeriodComparisonFromApi(params: {
+  state: SharedQueryState;
+  activeAoi?: AoiDefinition;
+  periodAStart: string;
+  periodAEnd: string;
+  periodBStart: string;
+  periodBEnd: string;
+  periodALabel?: string;
+  periodBLabel?: string;
+  granularity?: Granularity;
+  signal?: AbortSignal;
+}): Promise<PeriodComparisonResponse | null> {
+  const {
+    state,
+    activeAoi,
+    periodAStart,
+    periodAEnd,
+    periodBStart,
+    periodBEnd,
+    periodALabel,
+    periodBLabel,
+    granularity = 'month',
+    signal,
+  } = params;
+
+  const sp = new URLSearchParams();
+  appendAoiParams(sp, state, activeAoi);
+  sp.set('period_a_start', periodAStart);
+  sp.set('period_a_end', periodAEnd);
+  sp.set('period_b_start', periodBStart);
+  sp.set('period_b_end', periodBEnd);
+  if (periodALabel) sp.set('period_a_label', periodALabel);
+  if (periodBLabel) sp.set('period_b_label', periodBLabel);
+  sp.set('granularity', granularity);
+  sp.set('sensor', state.sensor);
+  sp.set('metric', state.calendarMetric);
+  sp.set('platforms', state.platforms.join(','));
+  sp.set('processing_status', state.processingStatus);
+  sp.set('daynight', state.dayNight);
+  sp.set('modis_min_confidence', String(state.modisMinConfidence));
+  sp.set('viirs_categories', state.viirsCategories.join(','));
+
+  const res = await fetch(`/api/v1/analytics/compare?${sp.toString()}`, { signal });
+  if (!res.ok) {
+    let msg = `Period comparison request failed (HTTP ${res.status}).`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) msg = body.error.message;
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(msg);
+  }
+  return (await res.json()) as PeriodComparisonResponse;
+}
+
+export async function fetchAoiComparisonFromApi(params: {
+  state: SharedQueryState;
+  aoiA: AoiDefinition;
+  aoiB: AoiDefinition;
+  startDate?: string;
+  endDate?: string;
+  granularity?: Granularity;
+  signal?: AbortSignal;
+}): Promise<AoiComparisonResponse | null> {
+  const {
+    state,
+    aoiA,
+    aoiB,
+    startDate = state.startDate,
+    endDate = state.endDate,
+    granularity = state.granularity,
+    signal,
+  } = params;
+
+  const sp = new URLSearchParams();
+  if (PRESET_AOIS.some((p) => p.id === aoiA.id)) {
+    sp.set('aoi_a_id', aoiA.id);
+  } else {
+    sp.set('aoi_a_id', aoiA.id);
+    sp.set('aoi_a_name', aoiA.name);
+    sp.set(
+      'bbox_a',
+      `${aoiA.bbox.west},${aoiA.bbox.south},${aoiA.bbox.east},${aoiA.bbox.north}`
+    );
+  }
+
+  if (PRESET_AOIS.some((p) => p.id === aoiB.id)) {
+    sp.set('aoi_b_id', aoiB.id);
+  } else {
+    sp.set('aoi_b_id', aoiB.id);
+    sp.set('aoi_b_name', aoiB.name);
+    sp.set(
+      'bbox_b',
+      `${aoiB.bbox.west},${aoiB.bbox.south},${aoiB.bbox.east},${aoiB.bbox.north}`
+    );
+  }
+
+  sp.set('start_date', startDate);
+  sp.set('end_date', endDate);
+  sp.set('granularity', granularity);
+  sp.set('sensor', state.sensor);
+  sp.set('metric', state.calendarMetric);
+  sp.set('platforms', state.platforms.join(','));
+  sp.set('processing_status', state.processingStatus);
+  sp.set('daynight', state.dayNight);
+  sp.set('modis_min_confidence', String(state.modisMinConfidence));
+  sp.set('viirs_categories', state.viirsCategories.join(','));
+
+  const res = await fetch(`/api/v1/analytics/compare-aois?${sp.toString()}`, { signal });
+  if (!res.ok) {
+    let msg = `AOI comparison request failed (HTTP ${res.status}).`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) msg = body.error.message;
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(msg);
+  }
+  return (await res.json()) as AoiComparisonResponse;
 }
 
 export async function fetchBoundedObservationsFromApi(params: {
@@ -272,7 +460,7 @@ export function queryBoundedObservations(params: {
       const t = Date.parse(r.acq_datetime_utc);
       if (t < startMs || t > endMs) return false;
       if (state.sensor !== 'ALL' && r.sensor !== state.sensor) return false;
-      if (state.platforms.length > 0 && !state.platforms.includes(r.platform)) return false;
+      if (!state.platforms.includes(r.platform)) return false;
       if (
         state.processingStatus !== 'ALL' &&
         r.processing_status !== state.processingStatus

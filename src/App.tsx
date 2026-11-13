@@ -35,6 +35,10 @@ import { SensorComparisonChart } from './components/SensorComparisonChart';
 import { SelectedBinDetail } from './components/SelectedBinDetail';
 import { ObservationInspector } from './components/ObservationInspector';
 import {
+  AoiComparisonPanel,
+  PeriodComparisonPanel,
+} from './components/ComparisonPanels';
+import {
   AboutView,
   DataSourcesView,
   MethodologyView,
@@ -45,6 +49,7 @@ import {
   fetchCalendarAnalyticsFromApi,
   fetchDataStatusFromApi,
   fetchLiveEonetForClient,
+  fetchMapGridFromApi,
   fetchMapHotspotsFromApi,
   generateProvenanceCsv,
   getActiveAoi,
@@ -54,17 +59,27 @@ import {
 import { PRESET_AOIS } from './data/firmsArchiveData';
 import {
   AoiDefinition,
+  AutoRefreshIntervalMs,
   BoundingBox,
   CalendarAnalyticsResponse,
   CanonicalObservation,
   DataStatusResponse,
   GeoPoint,
   Granularity,
+  MapDisplayMode,
+  MapGridResponse,
   PlatformId,
+  SavedAoiRecord,
   SensorFilter,
   SharedQueryState,
 } from './types/firescope';
 import { calculateGeometryMeasurement } from './science/fireScience';
+import {
+  deleteSavedAoi,
+  loadSavedAois,
+  renameSavedAoi,
+  saveAoiRecord,
+} from './utils/savedAois';
 
 export default function App() {
   // Parse initial URL search params if provided for reproducible shared links
@@ -105,6 +120,7 @@ export default function App() {
     dayNight: 'ALL',
     modisMinConfidence: 0,
     viirsCategories: ['low', 'nominal', 'high'],
+    excludeOffshore: true,
     calendarMetric: 'detection_count',
     controlDensity: 'overview',
     selectedBinKey: null,
@@ -114,6 +130,8 @@ export default function App() {
   const updateQueryState = (patch: Partial<SharedQueryState>) => {
     setQueryState((prev) => ({ ...prev, ...patch }));
   };
+
+  const activeAoi = useMemo(() => getActiveAoi(queryState), [queryState]);
 
   const [dataStatus, setDataStatus] = useState<DataStatusResponse>(() =>
     getLocalDataStatus()
@@ -133,18 +151,52 @@ export default function App() {
     north: 85,
     zoom: 2,
   });
+
+  // Sync mapViewport immediately whenever activeAoi changes (critical when switching AOI in AOI Analysis)
+  const activeAoiViewportKey = `${activeAoi.id}:${activeAoi.bbox.west},${activeAoi.bbox.south},${activeAoi.bbox.east},${activeAoi.bbox.north}`;
+  useEffect(() => {
+    if (activeAoi.id === 'global-world') {
+      setMapViewport({
+        west: -180,
+        south: -85,
+        east: 180,
+        north: 85,
+        zoom: 2,
+      });
+    } else {
+      setMapViewport({
+        west: activeAoi.bbox.west,
+        south: activeAoi.bbox.south,
+        east: activeAoi.bbox.east,
+        north: activeAoi.bbox.north,
+        zoom: 6,
+      });
+    }
+  }, [activeAoi.id, activeAoiViewportKey]);
+
   const [mapObservations, setMapObservations] = useState<CanonicalObservation[]>([]);
   const [hotspotsMeta, setHotspotsMeta] = useState<{
     totalInViewport: number;
     totalGlobal: number;
+    excludedOffshoreCount: number;
     sampled: boolean;
     isLoading: boolean;
   }>({
     totalInViewport: 0,
     totalGlobal: 0,
+    excludedOffshoreCount: 0,
     sampled: false,
     isLoading: true,
   });
+
+  // P1 Map Spatial Display Mode & P2 Auto-Refresh / Saved AOIs
+  const [mapDisplayMode, setMapDisplayMode] = useState<MapDisplayMode>('points');
+  const [gridResolutionDeg, setGridResolutionDeg] = useState<0.25 | 0.5 | 1.0 | 2.0>(0.5);
+  const [gridData, setGridData] = useState<MapGridResponse | null>(null);
+  const [savedAois, setSavedAois] = useState<SavedAoiRecord[]>(() => loadSavedAois());
+  const [autoRefreshMs, setAutoRefreshMs] = useState<AutoRefreshIntervalMs>(600000);
+  const [refreshNonce, setRefreshNonce] = useState<number>(0);
+  const [analysisSubTab, setAnalysisSubTab] = useState<'calendar' | 'period-compare' | 'aoi-compare'>('calendar');
 
   useEffect(() => {
     let isCancelled = false;
@@ -154,6 +206,7 @@ export default function App() {
         if (isCancelled) return;
         setDataStatus(status);
         if (
+          refreshNonce === 0 &&
           status.live_firms_connected &&
           status.live_firms_min_date &&
           status.live_firms_max_date &&
@@ -187,14 +240,47 @@ export default function App() {
     return () => {
       isCancelled = true;
     };
-  }, [initialUrlParams]);
+  }, [initialUrlParams, refreshNonce]);
 
-  // Fetch viewport-bounded 100% official live NASA FIRMS active-fire points on pan, zoom, or filter changes
+  // P2 Periodic Frontend Auto-Refresh Timer (respects user-selected Off / 5m / 10m interval)
+  useEffect(() => {
+    if (autoRefreshMs === 0) return;
+    const id = setInterval(() => {
+      setRefreshNonce((n) => n + 1);
+    }, autoRefreshMs);
+    return () => clearInterval(id);
+  }, [autoRefreshMs]);
+
+  // Fetch viewport-bounded NASA FIRMS points (or P1 spatial grid/cluster aggregation) on pan/zoom/filter/refresh
   useEffect(() => {
     const controller = new AbortController();
     setHotspotsMeta((prev) => ({ ...prev, isLoading: true }));
 
     const timer = setTimeout(() => {
+      if (mapDisplayMode === 'grid' || mapDisplayMode === 'cluster') {
+        fetchMapGridFromApi({
+          state: queryState,
+          bounds: mapViewport,
+          mode: mapDisplayMode,
+          resolutionDeg: gridResolutionDeg,
+          signal: controller.signal,
+        })
+          .then((res) => {
+            if (!res) {
+              setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
+              return;
+            }
+            setGridData(res);
+            setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
+          })
+          .catch(() => {
+            if (!controller.signal.aborted) {
+              setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
+            }
+          });
+        return;
+      }
+
       fetchMapHotspotsFromApi({
         state: queryState,
         bounds: mapViewport,
@@ -210,6 +296,7 @@ export default function App() {
           setHotspotsMeta({
             totalInViewport: res.total_in_viewport,
             totalGlobal: res.total_global_24h,
+            excludedOffshoreCount: res.excluded_offshore_count ?? 0,
             sampled: res.sampled,
             isLoading: false,
           });
@@ -240,6 +327,9 @@ export default function App() {
     };
   }, [
     mapViewport,
+    mapDisplayMode,
+    gridResolutionDeg,
+    refreshNonce,
     queryState.aoiId,
     queryState.customAoi,
     queryState.startDate,
@@ -250,6 +340,7 @@ export default function App() {
     queryState.dayNight,
     queryState.modisMinConfidence,
     queryState.viirsCategories,
+    queryState.excludeOffshore,
   ]);
 
   // Navigation & Tool Drawer states
@@ -268,6 +359,8 @@ export default function App() {
     graticuleGrid: true,
     coastlines: true,
     pixelFootprints: false,
+    terrainHillshade: false,
+    solarTerminator: false,
   });
   const [interactionMode, setInteractionMode] =
     useState<ActiveMapInteractionMode>('pan');
@@ -309,7 +402,7 @@ export default function App() {
     isNavDrawerOpen,
   ]);
 
-  const activeAoi = useMemo(() => getActiveAoi(queryState), [queryState]);
+  // Active AOI is derived near queryState above so viewport sync stays consistent.
 
   const liveMinDate = dataStatus.live_firms_min_date ?? '2026-11-12';
   const liveMaxDate = dataStatus.live_firms_max_date ?? '2026-11-13';
@@ -335,14 +428,28 @@ export default function App() {
   );
   const [serverCalendarAnalytics, setServerCalendarAnalytics] =
     useState<CalendarAnalyticsResponse | null>(null);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [calendarRetryNonce, setCalendarRetryNonce] = useState<number>(0);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchCalendarAnalyticsFromApi(queryState, controller.signal)
       .then((res) => {
-        if (res) setServerCalendarAnalytics(res);
+        if (!controller.signal.aborted && res) {
+          setServerCalendarAnalytics(res);
+          setCalendarError(null);
+        }
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setServerCalendarAnalytics(null);
+          setCalendarError(
+            err instanceof Error
+              ? err.message
+              : 'Failed to load calendar analytics from server.'
+          );
+        }
+      });
     return () => controller.abort();
   }, [
     queryState.aoiId,
@@ -357,6 +464,8 @@ export default function App() {
     queryState.modisMinConfidence,
     queryState.viirsCategories,
     queryState.calendarMetric,
+    refreshNonce,
+    calendarRetryNonce,
   ]);
 
   const calendarAnalytics = serverCalendarAnalytics ?? localCalendarAnalytics;
@@ -378,8 +487,8 @@ export default function App() {
     );
   }, [calendarAnalytics.series, queryState.selectedBinKey]);
 
-  const localSelectedBinObservations = useMemo(() => {
-    if (!selectedBin) return [];
+  const localSelectedBinResult = useMemo(() => {
+    if (!selectedBin) return { items: [] as CanonicalObservation[], total: 0 };
     const res = queryBoundedObservations({
       state: queryState,
       liveEonetRecords,
@@ -387,11 +496,12 @@ export default function App() {
       endUtc: selectedBin.time_bin_end_utc,
       limit: 150,
     });
-    return res.items;
+    return { items: res.items, total: res.total_matching };
   }, [queryState, liveEonetRecords, selectedBin]);
 
   const [serverSelectedBinObservations, setServerSelectedBinObservations] =
     useState<CanonicalObservation[] | null>(null);
+  const [serverSelectedBinTotal, setServerSelectedBinTotal] = useState<number | null>(null);
 
   useEffect(() => {
     if (!selectedBin) return;
@@ -404,9 +514,17 @@ export default function App() {
       signal: controller.signal,
     })
       .then((res) => {
-        if (res) setServerSelectedBinObservations(res.items);
+        if (!controller.signal.aborted && res) {
+          setServerSelectedBinObservations(res.items);
+          setServerSelectedBinTotal(res.total_matching);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setServerSelectedBinObservations(null);
+          setServerSelectedBinTotal(null);
+        }
+      });
     return () => controller.abort();
   }, [
     queryState.aoiId,
@@ -418,10 +536,13 @@ export default function App() {
     queryState.modisMinConfidence,
     queryState.viirsCategories,
     selectedBin?.bin_key,
+    refreshNonce,
   ]);
 
   const selectedBinObservations =
-    serverSelectedBinObservations ?? localSelectedBinObservations;
+    serverSelectedBinObservations ?? localSelectedBinResult.items;
+  const selectedBinTotalMatching =
+    serverSelectedBinTotal ?? localSelectedBinResult.total;
 
   const selectedObservation = useMemo<CanonicalObservation | null>(() => {
     if (!queryState.selectedObservationId) return null;
@@ -444,12 +565,54 @@ export default function App() {
   };
 
   const handleSelectPresetAoi = (aoiId: string) => {
+    const savedMatch = savedAois.find((s) => s.aoi.id === aoiId);
+    if (savedMatch) {
+      updateQueryState({
+        aoiId: savedMatch.aoi.id,
+        customAoi: savedMatch.aoi,
+        selectedBinKey: null,
+        selectedObservationId: null,
+      });
+      return;
+    }
     updateQueryState({
       aoiId,
       customAoi: null,
       selectedBinKey: null,
       selectedObservationId: null,
     });
+  };
+
+  const handleSaveCurrentAoi = (customLabel?: string) => {
+    const next = saveAoiRecord(activeAoi, customLabel);
+    setSavedAois(next);
+    const savedItem = next[0]?.aoi;
+    if (savedItem) {
+      updateQueryState({
+        aoiId: savedItem.id,
+        customAoi: savedItem,
+      });
+      showToast(`Saved AOI: ${savedItem.name}`);
+    }
+  };
+
+  const handleRenameSavedAoi = (aoiId: string, newName: string) => {
+    const next = renameSavedAoi(aoiId, newName);
+    setSavedAois(next);
+    const updated = next.find((s) => s.aoi.id === aoiId)?.aoi;
+    if (updated && queryState.aoiId === aoiId) {
+      updateQueryState({ customAoi: updated });
+    }
+    showToast('Renamed saved AOI.');
+  };
+
+  const handleDeleteSavedAoi = (aoiId: string) => {
+    const next = deleteSavedAoi(aoiId);
+    setSavedAois(next);
+    if (queryState.aoiId === aoiId) {
+      handleSelectPresetAoi('global-world');
+    }
+    showToast('Removed saved AOI.');
   };
 
   const handleApplyCustomAoi = (customAoi: AoiDefinition) => {
@@ -647,6 +810,15 @@ export default function App() {
                 hotspotsMeta={hotspotsMeta}
                 liveWindowMode={liveWindowMode}
                 onSelectLiveWindow={handleSelectLiveWindow}
+                mapDisplayMode={mapDisplayMode}
+                onChangeMapDisplayMode={setMapDisplayMode}
+                gridResolutionDeg={gridResolutionDeg}
+                onChangeGridResolutionDeg={setGridResolutionDeg}
+                gridData={gridData}
+                excludeOffshore={queryState.excludeOffshore}
+                onToggleExcludeOffshore={() =>
+                  updateQueryState({ excludeOffshore: !queryState.excludeOffshore })
+                }
               />
 
               {/* Floating Left Task Panel (AOI Search/Coordinates/Draw or Measure) — Section 5.1 */}
@@ -654,11 +826,31 @@ export default function App() {
                 <div className="absolute top-3 left-14 z-20">
                   <AoiSearchPanel
                     activeAoi={activeAoi}
+                    savedAois={savedAois}
                     onSelectPresetAoi={handleSelectPresetAoi}
+                    onSelectSavedAoi={(aoi) => {
+                      updateQueryState({
+                        aoiId: aoi.id,
+                        customAoi: aoi,
+                        selectedBinKey: null,
+                        selectedObservationId: null,
+                      });
+                      showToast(`Loaded Saved AOI: ${aoi.name}`);
+                    }}
+                    onSaveCurrentAoi={handleSaveCurrentAoi}
+                    onRenameSavedAoi={handleRenameSavedAoi}
+                    onDeleteSavedAoi={handleDeleteSavedAoi}
                     onApplyCustomAoi={handleApplyCustomAoi}
                     interactionMode={interactionMode}
                     onSetInteractionMode={setInteractionMode}
-                    onOpenAnalysis={() => setActiveRoute('analysis')}
+                    onOpenAnalysis={() => {
+                      setAnalysisSubTab('calendar');
+                      setActiveRoute('analysis');
+                    }}
+                    onOpenPeriodCompare={() => {
+                      setAnalysisSubTab('period-compare');
+                      setActiveRoute('analysis');
+                    }}
                     onClose={() => {
                       setActiveDockTool(null);
                       setInteractionMode('pan');
@@ -698,6 +890,8 @@ export default function App() {
                       onUpdateQueryState={updateQueryState}
                       series={calendarAnalytics.series}
                       onOpenCalendarAnalysis={() => setActiveRoute('analysis')}
+                      liveMinDate={liveMinDate}
+                      liveMaxDate={liveMaxDate}
                     />
                   </div>
                 )}
@@ -738,6 +932,16 @@ export default function App() {
               }
               basemap={basemap}
               onChangeBasemap={setBasemap}
+              mapDisplayMode={mapDisplayMode}
+              onChangeMapDisplayMode={setMapDisplayMode}
+              gridResolutionDeg={gridResolutionDeg}
+              onChangeGridResolutionDeg={setGridResolutionDeg}
+              autoRefreshMs={autoRefreshMs}
+              onChangeAutoRefreshMs={setAutoRefreshMs}
+              onManualRefresh={() => {
+                setRefreshNonce((n) => n + 1);
+                showToast('Refreshing live NASA FIRMS streams...');
+              }}
             />
 
             {/* Right-Side Observation Inspector Drawer (Section 8) */}
@@ -778,16 +982,28 @@ export default function App() {
                     onChange={(e) => handleSelectPresetAoi(e.target.value)}
                     className="h-8 px-2.5 rounded-[6px] bg-[var(--surface-1)] border border-[var(--border-subtle)] text-[12px] text-[var(--text-primary)]"
                   >
-                    {PRESET_AOIS.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                    {queryState.customAoi && (
-                      <option value={queryState.customAoi.id}>
-                        {queryState.customAoi.name}
-                      </option>
+                    <optgroup label="Reference Preset AOIs">
+                      {PRESET_AOIS.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                    {savedAois.length > 0 && (
+                      <optgroup label="Saved Personal AOIs">
+                        {savedAois.map((s) => (
+                          <option key={s.aoi.id} value={s.aoi.id}>
+                            ★ {s.aoi.name}
+                          </option>
+                        ))}
+                      </optgroup>
                     )}
+                    {queryState.customAoi &&
+                      !savedAois.some((s) => s.aoi.id === queryState.customAoi!.id) && (
+                        <option value={queryState.customAoi.id}>
+                          {queryState.customAoi.name}
+                        </option>
+                      )}
                   </select>
 
                   <button
@@ -810,157 +1026,231 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 7.2 Inline Activity Summary Strip (Vertical Dividers, No Generic KPI Cards!) */}
-              <section
-                aria-label="AOI Activity Summary Strip"
-                className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] px-4 py-3 flex flex-wrap items-center justify-between gap-y-3 divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-subtle)]"
+              {/* Analytical Mode Tabs */}
+              <div
+                role="tablist"
+                aria-label="AOI Analytical Views"
+                className="flex flex-wrap items-center gap-1 bg-[var(--surface-1)] p-1 rounded-[8px] border border-[var(--border-subtle)] w-fit"
               >
-                {/* Metric 1: MODIS Detections */}
-                <div className="w-full sm:w-auto sm:pr-5 space-y-0.5">
-                  <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
-                    <span className="w-2.5 h-2.5 bg-[#FFB454] inline-block rounded-[1px]" />
-                    <span>MODIS Observed Detections</span>
-                  </div>
-                  <div className="text-[22px] font-mono font-semibold text-[#FFB454] tabular-nums">
-                    {calendarAnalytics.totals.MODIS_detections.toLocaleString()}
-                  </div>
-                  <div className="text-[11px] font-mono text-[var(--text-muted)]">
-                    Terra: {calendarAnalytics.totals.platform_totals.TERRA} · Aqua:{' '}
-                    {calendarAnalytics.totals.platform_totals.AQUA} · 1 km C6.1
-                  </div>
-                </div>
+                {[
+                  { id: 'calendar' as const, label: 'Activity Calendar' },
+                  { id: 'period-compare' as const, label: 'Compare History' },
+                  { id: 'aoi-compare' as const, label: 'Compare Regions' },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={analysisSubTab === t.id}
+                    onClick={() => setAnalysisSubTab(t.id)}
+                    className={`px-3.5 py-1.5 rounded-[6px] text-[12px] font-medium transition-colors whitespace-nowrap ${
+                      analysisSubTab === t.id
+                        ? 'bg-[var(--ember)] text-white shadow-xs'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)]'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
 
-                {/* Metric 2: VIIRS Detections */}
-                <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:px-5 space-y-0.5">
-                  <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
-                    <span className="w-2.5 h-2.5 bg-[#61BDE0] inline-block rounded-full" />
-                    <span>VIIRS Observed Detections</span>
-                  </div>
-                  <div className="text-[22px] font-mono font-semibold text-[#61BDE0] tabular-nums">
-                    {calendarAnalytics.totals.VIIRS_detections.toLocaleString()}
-                  </div>
-                  <div className="text-[11px] font-mono text-[var(--text-muted)]">
-                    S-NPP: {calendarAnalytics.totals.platform_totals.SNPP} · N20:{' '}
-                    {calendarAnalytics.totals.platform_totals.NOAA20} · N21:{' '}
-                    {calendarAnalytics.totals.platform_totals.NOAA21}
-                  </div>
-                </div>
+              {analysisSubTab === 'period-compare' && (
+                <PeriodComparisonPanel
+                  activeAoi={activeAoi}
+                  queryState={queryState}
+                  parquetAvailable={Boolean(dataStatus.parquet_archive?.available)}
+                  liveMaxDate={liveMaxDate}
+                  onSelectAoiId={handleSelectPresetAoi}
+                  onNotify={showToast}
+                />
+              )}
 
-                {/* Metric 3: Observed FRP Summary (MW) */}
-                <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:px-5 space-y-0.5">
-                  <div className="text-[12px] text-[var(--text-secondary)]">
-                    Observed FRP · MW (Mean / Valid Records)
-                  </div>
-                  <div className="text-[18px] font-mono font-semibold text-[var(--text-primary)] tabular-nums">
-                    M: {calendarAnalytics.totals.MODIS_frp.mean_mw ?? '—'} MW · V:{' '}
-                    {calendarAnalytics.totals.VIIRS_frp.mean_mw ?? '—'} MW
-                  </div>
-                  <div className="text-[11px] font-mono text-[var(--text-muted)]">
-                    Valid FRP records: MODIS ({calendarAnalytics.totals.MODIS_frp.valid_count}) ·
-                    VIIRS ({calendarAnalytics.totals.VIIRS_frp.valid_count})
-                  </div>
-                </div>
+              {analysisSubTab === 'aoi-compare' && (
+                <AoiComparisonPanel
+                  activeAoi={activeAoi}
+                  savedAois={savedAois}
+                  queryState={queryState}
+                  onNotify={showToast}
+                />
+              )}
 
-                {/* Metric 4: Pooled Records (Explicitly Labeled as Non-Normalized!) */}
-                <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:pl-5 space-y-0.5">
-                  <div className="text-[12px] text-[var(--text-secondary)]">
-                    Pooled Observations (Unweighted Sum)
-                  </div>
-                  <div className="text-[20px] font-mono font-semibold text-[var(--text-primary)] tabular-nums">
-                    {calendarAnalytics.totals.pooled_observation_count.toLocaleString()}
-                  </div>
-                  <div className="text-[11px] text-[var(--text-muted)]">
-                    Not a harmonized cross-sensor or unique fire count
-                  </div>
-                </div>
-              </section>
+              {analysisSubTab === 'calendar' && (
+                <>
+                  {calendarError && (
+                    <div
+                      role="alert"
+                      className="px-4 py-2.5 rounded-[8px] bg-[var(--danger)]/10 border border-[var(--danger)]/35 text-[12px] text-[var(--danger)] flex flex-wrap items-center justify-between gap-2"
+                    >
+                      <span>Server calendar query error: {calendarError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setCalendarRetryNonce((n) => n + 1)}
+                        className="px-2.5 py-1 rounded bg-[var(--surface-1)] border border-[var(--danger)]/40 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--surface-2)]"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {/* 7.2 Inline Activity Summary Strip (Vertical Dividers, No Generic KPI Cards!) */}
+                  <section
+                    aria-label="AOI Activity Summary Strip"
+                    className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] px-4 py-3 flex flex-wrap items-center justify-between gap-y-3 divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-subtle)]"
+                  >
+                    {/* Metric 1: MODIS Detections */}
+                    <div className="w-full sm:w-auto sm:pr-5 space-y-0.5">
+                      <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
+                        <span className="w-2.5 h-2.5 bg-[#FFB454] inline-block rounded-[1px]" />
+                        <span>MODIS Observed Detections</span>
+                      </div>
+                      <div className="text-[22px] font-mono font-semibold text-[#FFB454] tabular-nums">
+                        {calendarAnalytics.totals.MODIS_detections.toLocaleString()}
+                      </div>
+                      <div className="text-[11px] font-mono text-[var(--text-muted)]">
+                        Terra: {calendarAnalytics.totals.platform_totals.TERRA.toLocaleString()} · Aqua:{' '}
+                        {calendarAnalytics.totals.platform_totals.AQUA.toLocaleString()} · 1 km C6.1
+                      </div>
+                    </div>
 
-              {/* 7.3 Main Analysis Grid: Burning-Activity Calendar (8/12) + Geographic Context Map Preview (4/12) */}
-              <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
-                <div className="xl:col-span-8">
-                  <CalendarHeatmap
+                    {/* Metric 2: VIIRS Detections */}
+                    <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:px-5 space-y-0.5">
+                      <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
+                        <span className="w-2.5 h-2.5 bg-[#61BDE0] inline-block rounded-full" />
+                        <span>VIIRS Observed Detections</span>
+                      </div>
+                      <div className="text-[22px] font-mono font-semibold text-[#61BDE0] tabular-nums">
+                        {calendarAnalytics.totals.VIIRS_detections.toLocaleString()}
+                      </div>
+                      <div className="text-[11px] font-mono text-[var(--text-muted)]">
+                        S-NPP: {calendarAnalytics.totals.platform_totals.SNPP.toLocaleString()} · N20:{' '}
+                        {calendarAnalytics.totals.platform_totals.NOAA20.toLocaleString()} · N21:{' '}
+                        {calendarAnalytics.totals.platform_totals.NOAA21.toLocaleString()}
+                      </div>
+                    </div>
+
+                    {/* Metric 3: Observed FRP Summary (MW) */}
+                    <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:px-5 space-y-0.5">
+                      <div className="text-[12px] text-[var(--text-secondary)]">
+                        Observed FRP · MW (Mean / Valid Records)
+                      </div>
+                      <div className="text-[18px] font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                        M: {calendarAnalytics.totals.MODIS_frp.mean_mw ?? '—'} MW · V:{' '}
+                        {calendarAnalytics.totals.VIIRS_frp.mean_mw ?? '—'} MW
+                      </div>
+                      <div className="text-[11px] font-mono text-[var(--text-muted)]">
+                        Valid FRP records: MODIS ({calendarAnalytics.totals.MODIS_frp.valid_count.toLocaleString()}) ·
+                        VIIRS ({calendarAnalytics.totals.VIIRS_frp.valid_count.toLocaleString()})
+                      </div>
+                    </div>
+
+                    {/* Metric 4: Pooled Records (Explicitly Labeled as Non-Normalized!) */}
+                    <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:pl-5 space-y-0.5">
+                      <div className="text-[12px] text-[var(--text-secondary)]">
+                        Pooled Observations (Unweighted Sum)
+                      </div>
+                      <div className="text-[20px] font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                        {calendarAnalytics.totals.pooled_observation_count.toLocaleString()}
+                      </div>
+                      <div className="text-[11px] text-[var(--text-muted)]">
+                        Not a harmonized cross-sensor or unique fire count
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* 7.3 Main Analysis Grid: Burning-Activity Calendar (8/12) + Geographic Context Map Preview (4/12) */}
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
+                    <div className="xl:col-span-8">
+                      <CalendarHeatmap
+                        analytics={calendarAnalytics}
+                        selectedBinKey={selectedBin?.bin_key ?? null}
+                        onSelectBin={(binKey) => updateQueryState({ selectedBinKey: binKey })}
+                        onChangeGranularity={(g) =>
+                          updateQueryState({ granularity: g, selectedBinKey: null })
+                        }
+                        onChangeSensor={(s) => updateQueryState({ sensor: s })}
+                        onChangeMetric={(m) => updateQueryState({ calendarMetric: m })}
+                        onApplyDatePreset={(startDate, endDate, granularity) =>
+                          updateQueryState({
+                            startDate,
+                            endDate,
+                            granularity,
+                            selectedBinKey: null,
+                          })
+                        }
+                        onOpenCompareHistory={() => setAnalysisSubTab('period-compare')}
+                        liveMinDate={liveMinDate}
+                        liveMaxDate={liveMaxDate}
+                      />
+                    </div>
+
+                    {/* Supporting Geographic Context Map Preview */}
+                    <div className="xl:col-span-4 bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] flex flex-col overflow-hidden min-h-[360px]">
+                      <div className="px-3.5 py-2.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
+                        <div>
+                          <h2 className="text-[14px] font-semibold text-[var(--text-primary)]">
+                            AOI Spatial Context
+                          </h2>
+                          <div className="text-[11px] text-[var(--text-secondary)]">
+                            Synchronized with selected date &amp; sensor filters
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsLayersOpen((prev) => !prev)}
+                          className="px-2 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)] flex items-center gap-1"
+                        >
+                          <SlidersHorizontal className="w-3 h-3 text-[var(--ember)]" />
+                          <span>Filters</span>
+                        </button>
+                      </div>
+                      <div className="flex-1 relative min-h-[300px]">
+                        <MapCanvas
+                          activeAoi={activeAoi}
+                          observations={mapObservations}
+                          selectedObservationId={queryState.selectedObservationId}
+                          onSelectObservation={(obs) =>
+                            updateQueryState({ selectedObservationId: obs.observation_id })
+                          }
+                          basemap={basemap}
+                          onChangeBasemap={setBasemap}
+                          overlays={overlays}
+                          interactionMode="pan"
+                          measurePoints={[]}
+                          onAddMeasurePoint={() => {}}
+                          measureUnitSystem={measureUnitSystem}
+                          compactPreview
+                          onOpenFullMap={() => setActiveRoute('map')}
+                          visiblePlatforms={queryState.platforms}
+                          onViewportChange={setMapViewport}
+                          hotspotsMeta={hotspotsMeta}
+                          excludeOffshore={queryState.excludeOffshore}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 7.5 Sensor & Platform Time-Series Comparison Chart */}
+                  <SensorComparisonChart
                     analytics={calendarAnalytics}
                     selectedBinKey={selectedBin?.bin_key ?? null}
                     onSelectBin={(binKey) => updateQueryState({ selectedBinKey: binKey })}
-                    onChangeGranularity={(g) =>
-                      updateQueryState({ granularity: g, selectedBinKey: null })
-                    }
-                    onChangeSensor={(s) => updateQueryState({ sensor: s })}
-                    onChangeMetric={(m) => updateQueryState({ calendarMetric: m })}
-                    onApplyDatePreset={(startDate, endDate, granularity) =>
-                      updateQueryState({
-                        startDate,
-                        endDate,
-                        granularity,
-                        selectedBinKey: null,
-                      })
-                    }
                   />
-                </div>
 
-                {/* Supporting Geographic Context Map Preview */}
-                <div className="xl:col-span-4 bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] flex flex-col overflow-hidden min-h-[360px]">
-                  <div className="px-3.5 py-2.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                    <div>
-                      <h2 className="text-[14px] font-semibold text-[var(--text-primary)]">
-                        AOI Spatial Context
-                      </h2>
-                      <div className="text-[11px] text-[var(--text-secondary)]">
-                        Synchronized with selected date &amp; sensor filters
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsLayersOpen((prev) => !prev)}
-                      className="px-2 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)] flex items-center gap-1"
-                    >
-                      <SlidersHorizontal className="w-3 h-3 text-[var(--ember)]" />
-                      <span>Filters</span>
-                    </button>
-                  </div>
-                  <div className="flex-1 relative min-h-[300px]">
-                    <MapCanvas
-                      activeAoi={activeAoi}
-                      observations={mapObservations}
+                  {/* 7.6 Selected Time-Bin Detail & Canonical Observation Records */}
+                  {selectedBin && (
+                    <SelectedBinDetail
+                      analytics={calendarAnalytics}
+                      selectedBin={selectedBin}
+                      binObservations={selectedBinObservations}
+                      totalMatchingObservations={selectedBinTotalMatching}
                       selectedObservationId={queryState.selectedObservationId}
                       onSelectObservation={(obs) =>
                         updateQueryState({ selectedObservationId: obs.observation_id })
                       }
-                      basemap={basemap}
-                      onChangeBasemap={setBasemap}
-                      overlays={overlays}
-                      interactionMode="pan"
-                      measurePoints={[]}
-                      onAddMeasurePoint={() => {}}
-                      measureUnitSystem={measureUnitSystem}
-                      compactPreview
-                      onOpenFullMap={() => setActiveRoute('map')}
-                      visiblePlatforms={queryState.platforms}
+                      onOpenMethodology={() => setActiveRoute('methodology')}
+                      onOpenDataSources={() => setActiveRoute('data-sources')}
                     />
-                  </div>
-                </div>
-              </div>
-
-              {/* 7.5 Sensor & Platform Time-Series Comparison Chart */}
-              <SensorComparisonChart
-                analytics={calendarAnalytics}
-                selectedBinKey={selectedBin?.bin_key ?? null}
-                onSelectBin={(binKey) => updateQueryState({ selectedBinKey: binKey })}
-              />
-
-              {/* 7.6 Selected Time-Bin Detail & Canonical Observation Records */}
-              {selectedBin && (
-                <SelectedBinDetail
-                  analytics={calendarAnalytics}
-                  selectedBin={selectedBin}
-                  binObservations={selectedBinObservations}
-                  selectedObservationId={queryState.selectedObservationId}
-                  onSelectObservation={(obs) =>
-                    updateQueryState({ selectedObservationId: obs.observation_id })
-                  }
-                  onOpenMethodology={() => setActiveRoute('methodology')}
-                  onOpenDataSources={() => setActiveRoute('data-sources')}
-                />
+                  )}
+                </>
               )}
             </div>
 
@@ -977,6 +1267,16 @@ export default function App() {
               }
               basemap={basemap}
               onChangeBasemap={setBasemap}
+              mapDisplayMode={mapDisplayMode}
+              onChangeMapDisplayMode={setMapDisplayMode}
+              gridResolutionDeg={gridResolutionDeg}
+              onChangeGridResolutionDeg={setGridResolutionDeg}
+              autoRefreshMs={autoRefreshMs}
+              onChangeAutoRefreshMs={setAutoRefreshMs}
+              onManualRefresh={() => {
+                setRefreshNonce((n) => n + 1);
+                showToast('Refreshing live NASA FIRMS streams...');
+              }}
             />
 
             <ObservationInspector

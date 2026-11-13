@@ -1,0 +1,209 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at_utc": "2026-11-13T18:22:26.809Z",
+  "spatial_grid_resolution_deg": 0.25,
+  "crs": "EPSG:4326",
+  "coverage_bbox": {
+    "west": 95.0199,
+    "south": -11.0038,
+    "east": 140.9776,
+    "north": 5.8782
+  },
+  "region_label": "Indonesia Extent (NASA FIRMS Official Historical Download)",
+  "date_range": {
+    "min_date": "2001-01-01",
+    "max_date": "2026-11-12"
+  },
+  "raw_rows_total": 8913500,
+  "canonical_rows_total": 8913218,
+  "superseded_nrt_count": 0,
+  "exact_duplicates_removed": 282,
+  "daily_aggregates_parquet": {
+    "path": "data/processed/daily_aggregates.parquet",
+    "rows": 2955260,
+    "bytes": 20752552
+  },
+  "recent_observations_parquet": {
+    "path": "data/processed/recent_observations_2026.parquet",
+    "min_date": "2026-10-01",
+    "rows": 737959,
+    "bytes": 12089794
+  },
+  "platform_coverage": [
+    {
+      "platform": "AQUA",
+      "sensor": "MODIS",
+      "first_date": "2002-07-04",
+      "last_date": "2026-11-12",
+      "canonical_count": 1121904
+    },
+    {
+      "platform": "TERRA",
+      "sensor": "MODIS",
+      "first_date": "2001-01-01",
+      "last_date": "2026-11-12",
+      "canonical_count": 574934
+    },
+    {
+      "platform": "NOAA20",
+      "sensor": "VIIRS",
+      "first_date": "2018-04-01",
+      "last_date": "2026-11-12",
+      "canonical_count": 1970210
+    },
+    {
+      "platform": "NOAA21",
+      "sensor": "VIIRS",
+      "first_date": "2023-03-01",
+      "last_date": "2026-11-12",
+      "canonical_count": 1105765
+    },
+    {
+      "platform": "SNPP",
+      "sensor": "VIIRS",
+      "first_date": "2012-01-20",
+      "last_date": "2026-11-02",
+      "canonical_count": 4140405
+    }
+  ],
+  "source_files": [
+    {
+      "file_id": "fire_archive_M-C61_844378",
+      "filename": "fire_archive_M-C61_844378.csv",
+      "zip_filename": "DL_FIRE_M-C61_844378.zip",
+      "zip_sha256": "fe57e59328f1ae68f742d54db46f00bf629e8268719c692ec1f36fc451db1b50",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_M-C61_844378.zip",
+      "source_product": "MCD14ML_MCD14DL_C6_1_SP",
+      "sensor": "MODIS",
+      "collection": "MODIS C6.1",
+      "processing_status": "STANDARD",
+      "sha256_checksum": "9acf9064550dc0ed8711399c8a878834c9be227bf3d6f66febaf0c2a12edc0d7",
+      "row_count": 1600907,
+      "date_window": "2001-01-01..2026-08-31",
+      "platforms": [
+        "AQUA",
+        "TERRA"
+      ]
+    },
+    {
+      "file_id": "fire_nrt_M-C61_844378",
+      "filename": "fire_nrt_M-C61_844378.csv",
+      "zip_filename": "DL_FIRE_M-C61_844378.zip",
+      "zip_sha256": "fe57e59328f1ae68f742d54db46f00bf629e8268719c692ec1f36fc451db1b50",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_M-C61_844378.zip",
+      "source_product": "MCD14ML_MCD14DL_C6_1_NRT",
+      "sensor": "MODIS",
+      "collection": "MODIS C6.1",
+      "processing_status": "NRT",
+      "sha256_checksum": "cd7dd23e75c9714a11563263200fa4eb3c9da23be6c2c63e5b5c5c51a87307fe",
+      "row_count": 95931,
+      "date_window": "2026-09-01..2026-11-12",
+      "platforms": [
+        "TERRA",
+        "AQUA"
+      ]
+    },
+    {
+      "file_id": "fire_archive_J1V-C2_844379",
+      "filename": "fire_archive_J1V-C2_844379.csv",
+      "zip_filename": "DL_FIRE_J1V-C2_844379.zip",
+      "zip_sha256": "6c65aeb15e5859d2d237dec3ea48542715ccefb7fbb4c3f4a42e19140b053aa8",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_J1V-C2_844379.zip",
+      "source_product": "VJ114IMGTDL_C2_SP",
+      "sensor": "VIIRS",
+      "collection": "VIIRS C2",
+      "processing_status": "STANDARD",
+      "sha256_checksum": "b98d641786df39a6532d6d277a4a757baab201787c7c2ad9fcdb6710fb169ec2",
+      "row_count": 1369899,
+      "date_window": "2018-04-01..2026-07-31",
+      "platforms": [
+        "NOAA20"
+      ]
+    },
+    {
+      "file_id": "fire_nrt_J1V-C2_844379",
+      "filename": "fire_nrt_J1V-C2_844379.csv",
+      "zip_filename": "DL_FIRE_J1V-C2_844379.zip",
+      "zip_sha256": "6c65aeb15e5859d2d237dec3ea48542715ccefb7fbb4c3f4a42e19140b053aa8",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_J1V-C2_844379.zip",
+      "source_product": "VJ114IMGTDL_C2_NRT",
+      "sensor": "VIIRS",
+      "collection": "VIIRS C2",
+      "processing_status": "NRT",
+      "sha256_checksum": "694aff643961973cd4619ea954aa34d0add27c94d276a5415da871cd9f32f458",
+      "row_count": 600350,
+      "date_window": "2026-08-01..2026-11-12",
+      "platforms": [
+        "NOAA20"
+      ]
+    },
+    {
+      "file_id": "fire_archive_J2V-C2_844380",
+      "filename": "fire_archive_J2V-C2_844380.csv",
+      "zip_filename": "DL_FIRE_J2V-C2_844380.zip",
+      "zip_sha256": "c47d458f82d540cdb9fb4ff5ec075757c5cb478b0498f8ad1f6327a806afa9bb",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_J2V-C2_844380.zip",
+      "source_product": "VJ214IMGTDL_C2_SP",
+      "sensor": "VIIRS",
+      "collection": "VIIRS C2",
+      "processing_status": "STANDARD",
+      "sha256_checksum": "800a9645eaaf4bdcdf0beeab0633dc60338839d011cc26dc5271d51670189b57",
+      "row_count": 516231,
+      "date_window": "2023-03-01..2026-07-31",
+      "platforms": [
+        "NOAA21"
+      ]
+    },
+    {
+      "file_id": "fire_nrt_J2V-C2_844380",
+      "filename": "fire_nrt_J2V-C2_844380.csv",
+      "zip_filename": "DL_FIRE_J2V-C2_844380.zip",
+      "zip_sha256": "c47d458f82d540cdb9fb4ff5ec075757c5cb478b0498f8ad1f6327a806afa9bb",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_J2V-C2_844380.zip",
+      "source_product": "VJ214IMGTDL_C2_NRT",
+      "sensor": "VIIRS",
+      "collection": "VIIRS C2",
+      "processing_status": "NRT",
+      "sha256_checksum": "562e5d536e5c440ae5ff3b28fe0bce3c8193dfb8f9273e9195a9c1cbe1767dc3",
+      "row_count": 589595,
+      "date_window": "2026-08-01..2026-11-12",
+      "platforms": [
+        "NOAA21"
+      ]
+    },
+    {
+      "file_id": "fire_archive_SV-C2_844381",
+      "filename": "fire_archive_SV-C2_844381.csv",
+      "zip_filename": "DL_FIRE_SV-C2_844381.zip",
+      "zip_sha256": "0a83b22937dea41d5113aa7787017f004878304d1b07aca7c4b87ddead4bc73b",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_SV-C2_844381.zip",
+      "source_product": "VNP14IMGTDL_C2_SP",
+      "sensor": "VIIRS",
+      "collection": "VIIRS C2",
+      "processing_status": "STANDARD",
+      "sha256_checksum": "8150232d91564b5c4fbd74027daad9194719d8bb9b0cdc23ec09ea71bf35bee4",
+      "row_count": 3568824,
+      "date_window": "2012-01-20..2026-07-31",
+      "platforms": [
+        "SNPP"
+      ]
+    },
+    {
+      "file_id": "fire_nrt_SV-C2_844381",
+      "filename": "fire_nrt_SV-C2_844381.csv",
+      "zip_filename": "DL_FIRE_SV-C2_844381.zip",
+      "zip_sha256": "0a83b22937dea41d5113aa7787017f004878304d1b07aca7c4b87ddead4bc73b",
+      "source_url": "https://firms.modaps.eosdis.nasa.gov/data/download/DL_FIRE_SV-C2_844381.zip",
+      "source_product": "VNP14IMGTDL_C2_NRT",
+      "sensor": "VIIRS",
+      "collection": "VIIRS C2",
+      "processing_status": "NRT",
+      "sha256_checksum": "0b5ceee3577e23b95a54a1a6d72c1798a2d08a03b958bbbc6284ad0347e6d8dc",
+      "row_count": 571763,
+      "date_window": "2026-08-01..2026-11-02",
+      "platforms": [
+        "SNPP"
+      ]
+    }
+  ]
+}

@@ -31,6 +31,16 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
       return Math.max(b.values.MODIS ?? 0, b.values.VIIRS ?? 0);
     })
   );
+  const maxPlatformCount = Math.max(
+    1,
+    ...series.flatMap((b) => [
+      b.platform_breakdown.TERRA ?? 0,
+      b.platform_breakdown.AQUA ?? 0,
+      b.platform_breakdown.SNPP ?? 0,
+      b.platform_breakdown.NOAA20 ?? 0,
+      b.platform_breakdown.NOAA21 ?? 0,
+    ])
+  );
 
   const platformColors: Record<PlatformId, string> = {
     TERRA: '#FFB454',
@@ -54,7 +64,11 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
               Sensor &amp; Platform Time-Series Comparison
             </h2>
             <span className="text-[11px] font-mono text-[var(--text-muted)]">
-              {query.metric === 'frp_mw' ? 'Unit: Observed FRP (MW)' : 'Unit: Observation Records'}
+              {breakdownMode === 'platform'
+                ? 'Unit: Observation Records per Platform'
+                : query.metric === 'frp_mw'
+                ? 'Unit: Observed FRP (MW)'
+                : 'Unit: Observation Records'}
             </span>
           </div>
           <p className="text-[12px] text-[var(--text-secondary)] mt-0.5">
@@ -186,7 +200,7 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
                     {(['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'] as PlatformId[]).map(
                       (pid) => {
                         const pCount = bin.platform_breakdown[pid] ?? 0;
-                        const pH = Math.min(100, Math.round((pCount / maxVal) * 100));
+                        const pH = Math.min(100, Math.round((pCount / maxPlatformCount) * 100));
                         return (
                           <div
                             key={pid}

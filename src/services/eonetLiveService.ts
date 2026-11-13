@@ -1,4 +1,5 @@
 import { CanonicalObservation, PlatformId, SensorId } from '../types/firescope';
+import { isVerifiedOffshoreMarineCoordinate } from '../science/fireScience';
 
 export interface EonetEventSource {
   id: string;
@@ -36,8 +37,9 @@ export const NASA_EONET_WILDFIRES_URL =
 const WEB_MERCATOR_MAX_LAT = 85.05112878;
 
 /**
- * Rejects coordinates that fall inside major open-ocean or marine basins
- * so offshore gas flares or anomalous marine coordinates never render as terrestrial wildfires.
+ * Rejects coordinates that fall inside verified offshore marine / deep open-ocean basins
+ * so offshore oil/gas flares or anomalous pelagic coordinates never render as terrestrial wildfires,
+ * without ever rejecting Eastern Brazil, West Africa, Angola, Cyprus, or volcanic/island landmasses.
  */
 export function isTerrestrialWgs84Coordinate(lat: number, lng: number): boolean {
   if (
@@ -51,22 +53,7 @@ export function isTerrestrialWgs84Coordinate(lat: number, lng: number): boolean 
     return false;
   }
 
-  // Open Pacific Ocean exclusion
-  if (lng < -125.5 && lat < 48 && lat > -55) return false;
-  if (lng < -82 && lat < 7 && lat > -55) return false;
-  // Open Atlantic Ocean exclusion
-  if (lng > -34 && lng < -17.5 && lat > -55 && lat < 60) return false;
-  if (lng > -60 && lng < -15 && lat > 12 && lat < 44) return false;
-  if (lng > -45 && lng < 8 && lat < -5 && lat > -55) return false;
-  // Gulf of Guinea marine exclusion
-  if (lat > -4 && lat < 4.2 && lng > -8 && lng < 8.8) return false;
-  // Open Indian Ocean exclusion
-  if (lng > 51 && lng < 94 && lat < 5 && lat > -55) return false;
-  if (lng > 94 && lng < 113 && lat < -10 && lat > -55) return false;
-  // Mediterranean open-water central basin exclusion (Tyrrhenian / Ionian / Levantine open sea)
-  if (lat > 33.0 && lat < 36.2 && lng > 12.0 && lng < 34.5) return false;
-
-  return true;
+  return !isVerifiedOffshoreMarineCoordinate(lat, lng);
 }
 
 function extractLatLngFromGeometry(geom: EonetEventGeometry): {
