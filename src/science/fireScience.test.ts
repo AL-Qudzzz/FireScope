@@ -1342,8 +1342,88 @@ test('aggregateCalendarAnalytics supports dynamic live archiveCoverageEnd and ke
   assert.equal(res.totals.MODIS_frp.sum_mw, 74.0);
 });
 
+test('CSV export helpers escape embedded quotes and neutralize spreadsheet formula prefixes', () => {
+  const emptyBuckets = observationsToDailyBuckets([]);
+  const cal = aggregateCalendarFromBuckets({
+    buckets: emptyBuckets,
+    aoi: SAMPLE_AOI,
+    startDate: '2026-11-10',
+    endDate: '2026-11-10',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'NOAA20'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: TEST_PLATFORM_REGISTRY,
+    archiveCoverageStart: '2001-01-01',
+    archiveCoverageEnd: '2026-11-13',
+    dataMode: 'LIVE_NASA_FIRMS',
+    demoNotice: 'CSV escape test',
+    sources: ['NASA FIRMS'],
+    retrievedAtUtc: '2026-11-13T00:00:00Z',
+    latestAcquisitionUtc: '2026-11-10T00:00:00Z',
+    archiveChecksums: ['c1'],
+  });
 
+  const comp = buildPeriodComparisonResponse({
+    aoi: SAMPLE_AOI,
+    periodA: cal,
+    periodB: cal,
+    periodALabel: 'A',
+    periodBLabel: 'B',
+    yoySummary: [],
+    dataBacking: 'REAL_NASA_ARCHIVE_PARQUET',
+    sources: ['NASA FIRMS'],
+    retrievedAtUtc: '2026-11-13T00:00:00Z',
+    archiveChecksums: ['c1'],
+  });
+  comp.aligned_series[0].aligned_label = '=SUM("A1", "B1")';
 
+  const csv = generatePeriodComparisonCsv(comp);
+  assert.ok(csv.includes('"\'=SUM(""A1"", ""B1"")"'));
+});
 
+test('Concurrent DuckDB Parquet bucket and map-grid queries complete cleanly without connection races', async () => {
+  const { queryParquetMapGrid } = await import('../services/parquetService');
+  const results = await Promise.all([
+    queryParquetDailyBuckets({
+      bbox: SAMPLE_AOI.bbox,
+      startDate: '2015-09-01',
+      endDate: '2015-09-10',
+      sensor: 'ALL',
+      platforms: ['TERRA', 'AQUA', 'SNPP'],
+      processingStatus: 'ALL',
+      dayNight: 'ALL',
+      modisMinConfidence: 0,
+      viirsCategories: ['low', 'nominal', 'high'],
+    }),
+    queryParquetMapGrid({
+      bbox: SAMPLE_AOI.bbox,
+      cellSizeDeg: 0.5,
+      startDate: '2015-09-01',
+      endDate: '2015-09-10',
+      sensor: 'ALL',
+      platforms: ['TERRA', 'AQUA', 'SNPP'],
+      processingStatus: 'ALL',
+      dayNight: 'ALL',
+      modisMinConfidence: 0,
+      viirsCategories: ['low', 'nominal', 'high'],
+    }),
+    queryParquetDailyBuckets({
+      bbox: SAMPLE_AOI.bbox,
+      startDate: '2023-09-01',
+      endDate: '2023-09-10',
+      sensor: 'ALL',
+      platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20'],
+      processingStatus: 'ALL',
+      dayNight: 'ALL',
+      modisMinConfidence: 0,
+      viirsCategories: ['low', 'nominal', 'high'],
+    }),
+  ]);
 
-
+  assert.ok(results[0].length > 0);
+  assert.ok(results[1].length > 0);
+  assert.ok(results[2].length > 0);
+});

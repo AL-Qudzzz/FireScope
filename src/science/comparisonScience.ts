@@ -1025,6 +1025,11 @@ export function computeSolarTerminatorPolygon(dateUtc: Date): Array<[number, num
   return polygon;
 }
 
+function escapeCsvCell(value: string): string {
+  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
 /**
  * Generates CSV export with definitions & SHA-256 provenance for FR-08 Period Comparison.
  */
@@ -1063,7 +1068,7 @@ export function generatePeriodComparisonCsv(comp: PeriodComparisonResponse): str
 
   const rows = comp.aligned_series.map((r) => [
     r.aligned_index,
-    `"${r.aligned_label}"`,
+    escapeCsvCell(r.aligned_label),
     r.period_a?.bin_key ?? '',
     r.period_b?.bin_key ?? '',
     r.period_a?.modis_detections ?? '',
@@ -1076,8 +1081,8 @@ export function generatePeriodComparisonCsv(comp: PeriodComparisonResponse): str
     r.period_b?.modis_frp_mean_mw ?? '',
     r.period_a?.viirs_frp_mean_mw ?? '',
     r.period_b?.viirs_frp_mean_mw ?? '',
-    `"${(r.period_a?.active_platforms ?? []).join(';')}"`,
-    `"${(r.period_b?.active_platforms ?? []).join(';')}"`,
+    escapeCsvCell((r.period_a?.active_platforms ?? []).join(';')),
+    escapeCsvCell((r.period_b?.active_platforms ?? []).join(';')),
   ]);
 
   return [...headerComments, columns.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -1109,7 +1114,7 @@ export function generateAoiComparisonCsv(comp: AoiComparisonResponse): string {
 
   const rows = comp.aligned_series.map((r) => [
     r.bin_key,
-    `"${r.label}"`,
+    escapeCsvCell(r.label),
     r.aoi_a_modis ?? '',
     r.aoi_a_viirs ?? '',
     r.aoi_b_modis ?? '',

@@ -82,6 +82,8 @@ export function getParquetManifest(): ParquetArchiveManifest | null {
   }
 }
 
+let duckdbQueue: Promise<void> = Promise.resolve();
+
 async function getDuckDbConn(): Promise<DuckDBConnection> {
   if (duckdbConnPromise) return duckdbConnPromise;
   duckdbConnPromise = (async () => {
@@ -89,6 +91,18 @@ async function getDuckDbConn(): Promise<DuckDBConnection> {
     return duckdbInstance.connect();
   })();
   return duckdbConnPromise;
+}
+
+function withDuckDbQueue<T>(fn: (conn: DuckDBConnection) => Promise<T>): Promise<T> {
+  const next = duckdbQueue.then(async () => {
+    const conn = await getDuckDbConn();
+    return fn(conn);
+  });
+  duckdbQueue = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
 }
 
 /**
@@ -237,7 +251,6 @@ export async function queryParquetDailyBuckets(params: {
   })}`;
 
   return withParquetCache(cacheKey, async () => {
-    const conn = await getDuckDbConn();
     const whereSql = buildFilterWhereClause({ ...params, useCellBins: true });
 
     const sql = `
@@ -259,8 +272,11 @@ export async function queryParquetDailyBuckets(params: {
       ORDER BY acq_date ASC;
     `;
 
-    const res = await conn.runAndReadAll(sql);
-    return res.getRowObjects().map((r) => ({
+    const rows = await withDuckDbQueue(async (conn) => {
+      const res = await conn.runAndReadAll(sql);
+      return res.getRowObjects();
+    });
+    return rows.map((r) => ({
       acq_date: String(r.acq_date),
       sensor: String(r.sensor) as SensorId,
       platform: String(r.platform) as PlatformId,
@@ -311,7 +327,6 @@ export async function queryParquetHistoricalMonthlyTotals(params: {
   })}`;
 
   return withParquetCache(cacheKey, async () => {
-    const conn = await getDuckDbConn();
     const whereSql = buildFilterWhereClause({
       ...params,
       startDate: manifest.date_range.min_date,
@@ -333,8 +348,11 @@ export async function queryParquetHistoricalMonthlyTotals(params: {
       ORDER BY yr ASC, mo ASC;
     `;
 
-    const res = await conn.runAndReadAll(sql);
-    return res.getRowObjects().map((r) => ({
+    const rows = await withDuckDbQueue(async (conn) => {
+      const res = await conn.runAndReadAll(sql);
+      return res.getRowObjects();
+    });
+    return rows.map((r) => ({
       year: Number(r.yr),
       month: String(r.mo),
       modis_count: Number(r.modis_count ?? 0),
@@ -382,7 +400,6 @@ export async function queryParquetMapGrid(params: {
   })}`;
 
   return withParquetCache(cacheKey, async () => {
-    const conn = await getDuckDbConn();
     const whereSql = buildFilterWhereClause({ ...params, useCellBins: true });
 
     const sql = `
@@ -402,8 +419,11 @@ export async function queryParquetMapGrid(params: {
       LIMIT 1800;
     `;
 
-    const res = await conn.runAndReadAll(sql);
-    return res.getRowObjects().map((r) => {
+    const rows = await withDuckDbQueue(async (conn) => {
+      const res = await conn.runAndReadAll(sql);
+      return res.getRowObjects();
+    });
+    return rows.map((r) => {
       const latBin = Number(r.g_lat);
       const lngBin = Number(r.g_lng);
       const modis = Number(r.modis_detections ?? 0);
@@ -453,7 +473,6 @@ export async function queryParquetRecentObservations(params: {
   const endDate = params.endUtc.slice(0, 10);
   if (endDate < '2026-10-01') return null;
 
-  const conn = await getDuckDbConn();
   const baseWhere = buildFilterWhereClause({
     bbox: params.bbox,
     startDate: startDate < '2026-10-01' ? '2026-10-01' : startDate,
@@ -477,28 +496,33 @@ export async function queryParquetRecentObservations(params: {
 
   const fullWhere = `${baseWhere} ${extraModisFilter}`;
 
-  const countRes = await conn.runAndReadAll(`
-    SELECT COUNT(*)::INTEGER AS total
-    FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
-    WHERE ${fullWhere};
-  `);
-  const totalMatching = Number(countRes.getRowObjects()[0]?.total ?? 0);
+  const { totalMatching, rows } = await withDuckDbQueue(async (conn) => {
+    const countRes = await conn.runAndReadAll(`
+      SELECT COUNT(*)::INTEGER AS total
+      FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
+      WHERE ${fullWhere};
+    `);
+    const total = Number(countRes.getRowObjects()[0]?.total ?? 0);
+    if (total === 0) {
+      return { totalMatching: 0, rows: [] as Array<Record<string, unknown>> };
+    }
+    const rowsRes = await conn.runAndReadAll(`
+      SELECT *
+      FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
+      WHERE ${fullWhere}
+      ORDER BY acq_date DESC, acq_time_native DESC
+      LIMIT ${Math.max(1, Math.min(250, params.limit))}
+      OFFSET ${Math.max(0, params.offset)};
+    `);
+    return { totalMatching: total, rows: rowsRes.getRowObjects() };
+  });
 
   if (totalMatching === 0) {
     return { items: [], totalMatching: 0 };
   }
 
-  const rowsRes = await conn.runAndReadAll(`
-    SELECT *
-    FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
-    WHERE ${fullWhere}
-    ORDER BY acq_date DESC, acq_time_native DESC
-    LIMIT ${Math.max(1, Math.min(250, params.limit))}
-    OFFSET ${Math.max(0, params.offset)};
-  `);
-
   const retrievedAt = getParquetManifest()?.generated_at_utc ?? new Date().toISOString();
-  const items: CanonicalObservation[] = rowsRes.getRowObjects().map((r, idx) => {
+  const items: CanonicalObservation[] = rows.map((r, idx) => {
     const sensor = String(r.sensor) as SensorId;
     const platform = String(r.platform) as PlatformId;
     const lat = Number(r.latitude);

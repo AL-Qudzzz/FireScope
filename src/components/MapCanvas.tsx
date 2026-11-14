@@ -373,12 +373,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     };
 
+    const onWindowMouseUp = () => {
+      if (bboxDraftStartRef.current) {
+        bboxDraftStartRef.current = null;
+        if (bboxDraftRectRef.current && interactiveDraftLayerRef.current) {
+          interactiveDraftLayerRef.current.removeLayer(bboxDraftRectRef.current);
+          bboxDraftRectRef.current = null;
+        }
+      }
+    };
+
     map.on('move', onMoveLive);
     map.on('moveend zoomend resize', onMoveOrZoomEnd);
     map.on('mousemove', onMouseMove);
     map.on('mousedown', onMouseDown);
     map.on('mouseup', onMouseUp);
     map.on('click', onClick);
+    window.addEventListener('mouseup', onWindowMouseUp);
 
     const invalidateMapLayout = () => {
       map.invalidateSize({ animate: false });
@@ -400,6 +411,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       resizeObserver.disconnect();
       window.removeEventListener('resize', onWindowResizeOrOrientation);
       window.removeEventListener('orientationchange', onWindowResizeOrOrientation);
+      window.removeEventListener('mouseup', onWindowMouseUp);
       map.off('move', onMoveLive);
       map.off('moveend zoomend resize', onMoveOrZoomEnd);
       map.off('mousemove', onMouseMove);
@@ -908,6 +920,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   );
 
   useEffect(() => {
+    if (interactionMode !== 'draw-polygon') {
+      setPolygonDraftPoints([]);
+    }
+    if (interactionMode !== 'draw-bbox') {
+      bboxDraftStartRef.current = null;
+      if (bboxDraftRectRef.current && interactiveDraftLayerRef.current) {
+        interactiveDraftLayerRef.current.removeLayer(bboxDraftRectRef.current);
+        bboxDraftRectRef.current = null;
+      }
+    }
+  }, [interactionMode]);
+
+  useEffect(() => {
     const group = interactiveDraftLayerRef.current;
     const renderer = canvasRendererRef.current;
     if (!group || !renderer) return;
@@ -915,7 +940,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     bboxDraftRectRef.current = null;
 
     for (const lngOffset of worldOffsets) {
-      if (polygonDraftPoints.length > 0) {
+      if (interactionMode === 'draw-polygon' && polygonDraftPoints.length > 0) {
         const latlngs = polygonDraftPoints.map(
           (pt) => [pt.lat, pt.lng + lngOffset] as [number, number]
         );
@@ -1337,9 +1362,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         </div>
         <span className="text-[var(--border-subtle)] shrink-0">|</span>
         <span className="truncate">
-          {compactPreview
-            ? `${cursorGeo.lat.toFixed(2)}°, ${cursorGeo.lng.toFixed(2)}°`
-            : `${cursorGeo.lat.toFixed(2)}°, ${cursorGeo.lng.toFixed(2)}°`}
+          {`${cursorGeo.lat.toFixed(2)}°, ${cursorGeo.lng.toFixed(2)}°`}
           <span className="hidden md:inline"> (WGS84)</span>
         </span>
         {!compactPreview && (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppRoute } from '../components/GlobalHeader';
 import {
   ActiveMapInteractionMode,
@@ -88,6 +88,10 @@ function writeStoredTheme(isDark: boolean): void {
   }
 }
 
+function isIsoDateParam(val: string | null): val is string {
+  return Boolean(val && /^\d{4}-\d{2}-\d{2}$/.test(val) && !Number.isNaN(Date.parse(`${val}T00:00:00Z`)));
+}
+
 export function useFireScopeWorkspace() {
   const initialUrlParams = useMemo(() => new URLSearchParams(window.location.search), []);
 
@@ -115,86 +119,123 @@ export function useFireScopeWorkspace() {
     writeStoredTheme(isDark);
   }, [isDark]);
 
-  const [queryState, setQueryState] = useState<SharedQueryState>(() => ({
-    aoiId: initialUrlParams.get('aoi') || 'global-world',
-    customAoi: null,
-    startDate: initialUrlParams.get('start') || '2026-11-12',
-    endDate: initialUrlParams.get('end') || '2026-11-13',
-    granularity: (initialUrlParams.get('granularity') as Granularity) || 'day',
-    sensor: (initialUrlParams.get('sensor') as SensorFilter) || 'ALL',
-    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
-    processingStatus: 'ALL',
-    dayNight: 'ALL',
-    modisMinConfidence: 0,
-    viirsCategories: ['low', 'nominal', 'high'],
-    excludeOffshore: true,
-    calendarMetric: 'detection_count',
-    controlDensity: 'overview',
-    selectedBinKey: null,
-    selectedObservationId: null,
-  }));
+  const [queryState, setQueryState] = useState<SharedQueryState>(() => {
+    const rawStart = initialUrlParams.get('start');
+    const rawEnd = initialUrlParams.get('end');
+    const validStart = isIsoDateParam(rawStart) ? rawStart : '2026-11-12';
+    const validEnd = isIsoDateParam(rawEnd) ? rawEnd : '2026-11-13';
+    const orderedStart = validStart <= validEnd ? validStart : '2026-11-12';
+    const orderedEnd = validStart <= validEnd ? validEnd : '2026-11-13';
+
+    const rawGran = initialUrlParams.get('granularity');
+    const granularity: Granularity =
+      rawGran === 'day' || rawGran === 'week' || rawGran === 'month' ? rawGran : 'day';
+
+    const rawSensor = initialUrlParams.get('sensor');
+    const sensor: SensorFilter =
+      rawSensor === 'ALL' || rawSensor === 'MODIS' || rawSensor === 'VIIRS' ? rawSensor : 'ALL';
+
+    return {
+      aoiId: initialUrlParams.get('aoi') || 'global-world',
+      customAoi: null,
+      startDate: orderedStart,
+      endDate: orderedEnd,
+      granularity,
+      sensor,
+      platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+      processingStatus: 'ALL',
+      dayNight: 'ALL',
+      modisMinConfidence: 0,
+      viirsCategories: ['low', 'nominal', 'high'],
+      excludeOffshore: true,
+      calendarMetric: 'detection_count',
+      controlDensity: 'overview',
+      selectedBinKey: null,
+      selectedObservationId: null,
+    };
+  });
 
   const [savedAois, setSavedAois] = useState<SavedAoiRecord[]>(() => loadSavedAois());
-
-  const updateQueryState = (patch: Partial<SharedQueryState>) => {
-    const projectedCustomAoi =
-      patch.customAoi !== undefined ? patch.customAoi : queryState.customAoi;
-    const projectedAoiId = patch.aoiId ?? queryState.aoiId;
-    const projectedTargetAoi = resolveTargetAoi(projectedAoiId, projectedCustomAoi, savedAois);
-
-    if (
-      patch.startDate &&
-      patch.startDate < '2024-01-01' &&
-      !isAoiInIndonesiaArchive(projectedTargetAoi)
-    ) {
-      showToast('Switched AOI to Indonesia Archipelago (2001–2026 NASA FIRMS Archive)');
-    }
-
-    setQueryState((prev) => {
-      const nextCustomAoi =
-        patch.customAoi !== undefined ? patch.customAoi : prev.customAoi;
-      const nextAoiId = patch.aoiId ?? prev.aoiId;
-      const targetAoi = resolveTargetAoi(nextAoiId, nextCustomAoi, savedAois);
-
-      if (
-        patch.startDate &&
-        patch.startDate < '2024-01-01' &&
-        !isAoiInIndonesiaArchive(targetAoi)
-      ) {
-        return {
-          ...prev,
-          ...patch,
-          aoiId: 'indonesia-archipelago',
-          customAoi: null,
-          selectedBinKey: null,
-          selectedObservationId: null,
-        };
-      }
-
-      if (
-        (patch.aoiId !== undefined || patch.customAoi !== undefined) &&
-        patch.startDate === undefined &&
-        prev.startDate < '2024-01-01' &&
-        !isAoiInIndonesiaArchive(targetAoi)
-      ) {
-        return {
-          ...prev,
-          ...patch,
-          startDate: liveMinDate,
-          endDate: liveMaxDate,
-          granularity: 'day',
-        };
-      }
-
-      return { ...prev, ...patch };
-    });
-  };
-
-  const activeAoi = useMemo(() => getActiveAoi(queryState), [queryState]);
-
   const [dataStatus, setDataStatus] = useState<DataStatusResponse>(() =>
     getLocalDataStatus()
   );
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+      toastTimerRef.current = null;
+    }, 4000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const liveMinDate = dataStatus.live_firms_min_date ?? '2026-11-12';
+  const liveMaxDate = dataStatus.live_firms_max_date ?? '2026-11-13';
+
+  const updateQueryState = useCallback(
+    (patch: Partial<SharedQueryState>) => {
+      let switchedToIndonesia = false;
+
+      setQueryState((prev) => {
+        const nextCustomAoi =
+          patch.customAoi !== undefined ? patch.customAoi : prev.customAoi;
+        const nextAoiId = patch.aoiId ?? prev.aoiId;
+        const targetAoi = resolveTargetAoi(nextAoiId, nextCustomAoi, savedAois);
+
+        if (
+          patch.startDate &&
+          patch.startDate < '2024-01-01' &&
+          !isAoiInIndonesiaArchive(targetAoi)
+        ) {
+          switchedToIndonesia = true;
+          return {
+            ...prev,
+            ...patch,
+            aoiId: 'indonesia-archipelago',
+            customAoi: null,
+            selectedBinKey: null,
+            selectedObservationId: null,
+          };
+        }
+
+        if (
+          (patch.aoiId !== undefined || patch.customAoi !== undefined) &&
+          patch.startDate === undefined &&
+          prev.startDate < '2024-01-01' &&
+          !isAoiInIndonesiaArchive(targetAoi)
+        ) {
+          return {
+            ...prev,
+            ...patch,
+            startDate: liveMinDate,
+            endDate: liveMaxDate,
+            granularity: 'day',
+          };
+        }
+
+        return { ...prev, ...patch };
+      });
+
+      if (switchedToIndonesia) {
+        showToast('Switched AOI to Indonesia Archipelago (2001–2026 NASA FIRMS Archive)');
+      }
+    },
+    [savedAois, liveMinDate, liveMaxDate, showToast]
+  );
+
+  const activeAoi = useMemo(() => getActiveAoi(queryState), [queryState]);
   const [liveEonetRecords, setLiveEonetRecords] = useState<CanonicalObservation[]>([]);
 
   const [mapViewport, setMapViewport] = useState<{
@@ -407,7 +448,6 @@ export function useFireScopeWorkspace() {
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [isCaptureModalOpen, setIsCaptureModalOpen] = useState(false);
   const [isContextStripExpanded, setIsContextStripExpanded] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Map appearance & interaction states
   const [basemap, setBasemap] = useState<BasemapStyle>('satellite');
@@ -472,10 +512,9 @@ export function useFireScopeWorkspace() {
     isLayersOpen,
     isNavDrawerOpen,
     isContextStripExpanded,
+    updateQueryState,
   ]);
 
-  const liveMinDate = dataStatus.live_firms_min_date ?? '2026-11-12';
-  const liveMaxDate = dataStatus.live_firms_max_date ?? '2026-11-13';
   const liveWindowMode: 'today' | '24h' | 'archive' =
     queryState.startDate === liveMaxDate && queryState.endDate === liveMaxDate
       ? 'today'
@@ -509,9 +548,7 @@ export function useFireScopeWorkspace() {
     fetchCalendarAnalyticsFromApi(queryState, controller.signal)
       .then((res) => {
         if (!controller.signal.aborted) {
-          if (res) {
-            setServerCalendarAnalytics(res);
-          }
+          setServerCalendarAnalytics(res ?? null);
           setCalendarError(null);
           setIsCalendarLoading(false);
         }
@@ -598,6 +635,9 @@ export function useFireScopeWorkspace() {
           if (res) {
             setServerSelectedBinObservations(res.items);
             setServerSelectedBinTotal(res.total_matching);
+          } else {
+            setServerSelectedBinObservations(null);
+            setServerSelectedBinTotal(null);
           }
           setIsBinObservationsLoading(false);
         }
@@ -640,13 +680,6 @@ export function useFireScopeWorkspace() {
       null
     );
   }, [queryState.selectedObservationId, mapObservations, selectedBinObservations]);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 4000);
-  };
 
   const handleSelectPresetAoi = (aoiId: string) => {
     const savedMatch = savedAois.find((s) => s.aoi.id === aoiId);

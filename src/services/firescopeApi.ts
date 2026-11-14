@@ -514,6 +514,11 @@ export function queryBoundedObservations(params: {
   };
 }
 
+function escapeCsvCell(value: string): string {
+  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
 export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): string {
   const headerComments = [
     `# FireScope Analytical Export — Active-Fire Observation Activity`,
@@ -574,9 +579,9 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
     b.frp_summary.VIIRS.sum_mw ?? '',
     b.frp_summary.VIIRS.mean_mw ?? '',
     b.frp_summary.VIIRS.valid_count,
-    `"${(b.seasonal_baseline?.MODIS.status_label ?? '').replace(/"/g, '""')}"`,
-    `"${(b.seasonal_baseline?.VIIRS.status_label ?? '').replace(/"/g, '""')}"`,
-    `"${b.quality.coverage_note.replace(/"/g, '""')}"`,
+    escapeCsvCell(b.seasonal_baseline?.MODIS.status_label ?? ''),
+    escapeCsvCell(b.seasonal_baseline?.VIIRS.status_label ?? ''),
+    escapeCsvCell(b.quality.coverage_note),
   ]);
 
   return [...headerComments, columns.join(','), ...rows.map((r) => r.join(','))].join('\n');

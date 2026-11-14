@@ -580,7 +580,7 @@ async function computeServerCalendarAnalytics(params: {
       isPointInAoi(r.latitude, r.longitude, aoi)
   );
   const relevantArchive =
-    startDate < liveCutoffDate && startDate <= '2026-11-11'
+    startDate < liveCutoffDate && startDate <= '2026-11-13'
       ? ALL_ARCHIVE_OBSERVATIONS.filter(
           (r) =>
             r.acq_date >= startDate &&
@@ -1013,14 +1013,21 @@ async function startServer() {
     const liveCutoff = firmsSnap.connected ? firmsSnap.minDate : '9999-12-31';
     const manifest = getParquetManifest();
 
-    const normWest = Math.max(-180, west);
-    const normEast = Math.min(180, east);
+    const normalizeLng = (lng: number) => ((((lng + 180) % 360) + 360) % 360) - 180;
+    const isFullWorld = east - west >= 359;
+    let normWest = isFullWorld ? -180 : normalizeLng(west);
+    let normEast = isFullWorld ? 180 : normalizeLng(east);
+    if (normWest > normEast) {
+      normWest = -180;
+      normEast = 180;
+    }
+
     const effectiveBbox =
       aoiResolution.aoi.id === 'global-world'
         ? {
-            west: normEast - normWest >= 359 ? -180 : normWest,
+            west: normWest,
             south: Math.max(-85, south),
-            east: normEast - normWest >= 359 ? 180 : normEast,
+            east: normEast,
             north: Math.min(85, north),
           }
         : aoiResolution.aoi.bbox;
@@ -1028,10 +1035,10 @@ async function startServer() {
     const overlapsParquet =
       Boolean(manifest?.available) &&
       startDate < liveCutoff &&
-      effectiveBbox.east >= 95.0 &&
-      effectiveBbox.west <= 141.0 &&
-      effectiveBbox.north >= -11.1 &&
-      effectiveBbox.south <= 6.0;
+      effectiveBbox.east >= 94.5 &&
+      effectiveBbox.west <= 141.8 &&
+      effectiveBbox.north >= -11.5 &&
+      effectiveBbox.south <= 6.5;
 
     const parquetCells = overlapsParquet
       ? await queryParquetMapGrid({
@@ -1670,7 +1677,7 @@ async function startServer() {
           historicalTotal = pqRes.totalMatching;
         }
       }
-    } else if (!inParquet && startDateStr < liveCutoff && startDateStr <= '2026-11-11') {
+    } else if (!inParquet && startDateStr < liveCutoff && startDateStr <= '2026-11-13') {
       const fixtureMatching = ALL_ARCHIVE_OBSERVATIONS.filter((r) => {
         if (r.acq_date >= liveCutoff) return false;
         if (!isPointInAoi(r.latitude, r.longitude, targetAoi)) return false;
