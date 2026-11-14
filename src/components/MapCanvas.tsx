@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
+  ChevronDown,
+  ChevronUp,
   Crosshair,
   Globe,
   Maximize2,
   Plus,
   Minus,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   AoiDefinition,
@@ -152,6 +155,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const [worldBaseLng, setWorldBaseLng] = useState<number>(0);
   const worldBaseLngRef = useRef<number>(0);
   const [cursorGeo, setCursorGeo] = useState<GeoPoint>({ lat: 15, lng: 15 });
+  const [isCompactControlsOpen, setIsCompactControlsOpen] = useState<boolean>(false);
 
   // Drawing states for AOI BBox or Polygon
   const bboxDraftStartRef = useRef<GeoPoint | null>(null);
@@ -375,14 +379,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     map.on('mouseup', onMouseUp);
     map.on('click', onClick);
 
-    const resizeObserver = new ResizeObserver(() => {
+    const invalidateMapLayout = () => {
       map.invalidateSize({ animate: false });
       updateMapMetrics(map);
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      invalidateMapLayout();
     });
     resizeObserver.observe(container);
 
+    const onWindowResizeOrOrientation = () => {
+      window.requestAnimationFrame(invalidateMapLayout);
+    };
+    window.addEventListener('resize', onWindowResizeOrOrientation);
+    window.addEventListener('orientationchange', onWindowResizeOrOrientation);
+
     return () => {
       resizeObserver.disconnect();
+      window.removeEventListener('resize', onWindowResizeOrOrientation);
+      window.removeEventListener('orientationchange', onWindowResizeOrOrientation);
       map.off('move', onMoveLive);
       map.off('moveend zoomend resize', onMoveOrZoomEnd);
       map.off('mousemove', onMouseMove);
@@ -1013,14 +1029,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       />
 
       {/* Upper-Left Map Navigation Control Rail (Section 5.5) */}
-      <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5">
+      <div className="absolute top-2.5 left-2.5 sm:top-3 sm:left-3 z-20 flex flex-row sm:flex-col gap-1.5">
         <div className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md flex flex-col overflow-hidden shadow-md">
           <button
             type="button"
             onClick={handleZoomIn}
             aria-label="Zoom in"
             title="Zoom in (+)"
-            className="w-9 h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] border-b border-[var(--border-subtle)] transition-colors"
+            className="w-11 h-11 md:w-9 md:h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] border-b border-[var(--border-subtle)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -1029,7 +1045,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             onClick={handleZoomOut}
             aria-label="Zoom out"
             title="Zoom out (-)"
-            className="w-9 h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] transition-colors"
+            className="w-11 h-11 md:w-9 md:h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
           >
             <Minus className="w-4 h-4" />
           </button>
@@ -1041,7 +1057,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             onClick={handleFitAoi}
             aria-label="Return to selected AOI extent"
             title="Fit map to selected Area of Interest"
-            className="w-9 h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] border-b border-[var(--border-subtle)] transition-colors"
+            className="w-11 h-11 md:w-9 md:h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] border-b border-[var(--border-subtle)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
           >
             <Crosshair className="w-4 h-4 text-[var(--ember)]" />
           </button>
@@ -1050,7 +1066,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             onClick={handleGlobalView}
             aria-label="Reset to global view"
             title="Reset to global view"
-            className="w-9 h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] transition-colors"
+            className="w-11 h-11 md:w-9 md:h-9 flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
           >
             <Globe className="w-4 h-4" />
           </button>
@@ -1062,7 +1078,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             onClick={onOpenFullMap}
             aria-label="Open full-screen Map Explorer"
             title="Expand in Map Explorer"
-            className="w-9 h-9 bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] shadow-md transition-colors"
+            className="w-11 h-11 md:w-9 md:h-9 bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--surface-3)] shadow-md transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
           >
             <Maximize2 className="w-4 h-4" />
           </button>
@@ -1071,7 +1087,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       {/* Active Drawing / Polygon Instruction Banner */}
       {interactionMode === 'draw-polygon' && (
-        <div className="absolute top-3 left-16 z-20 bg-[var(--surface-1)] border border-[var(--ember)] px-3 py-1.5 rounded-md flex items-center gap-3 text-[12px] shadow-md">
+        <div className="absolute top-14 sm:top-3 left-2.5 sm:left-16 right-2.5 sm:right-auto z-20 bg-[var(--surface-1)] border border-[var(--ember)] px-3 py-1.5 rounded-md flex flex-wrap items-center gap-2 sm:gap-3 text-[12px] shadow-md max-w-[calc(100vw-20px)]">
           <span className="text-[var(--text-primary)]">
             Click map to place polygon vertices ({polygonDraftPoints.length} placed)
           </span>
@@ -1109,7 +1125,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       {/* Active Measurement Readout Banner */}
       {measurePoints.length >= 2 && (
-        <div className="absolute top-3 left-16 z-20 bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] px-3 py-1.5 rounded-md font-mono text-[11px] text-[var(--text-primary)] shadow-md">
+        <div className="absolute top-14 sm:top-3 left-2.5 sm:left-16 z-20 bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] px-3 py-1.5 rounded-md font-mono text-[11px] text-[var(--text-primary)] shadow-md max-w-[calc(100vw-20px)]">
           {interactionMode === 'measure-area' && measurePoints.length >= 3
             ? `Measured Geometry Area: ${
                 measureUnitSystem === 'metric'
@@ -1125,169 +1141,210 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       )}
 
       {/* Upper-Right Basemap Selector, FIRMS Time Mode & Red Fire Hotspot Legend */}
-      <div className="absolute top-3 right-3 z-20 flex flex-col items-end gap-2">
-        <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md p-0.5 flex items-center gap-0.5 text-[11px] shadow-md">
-          {(['satellite', 'terrain', 'reference'] as BasemapStyle[]).map((style) => (
-            <button
-              key={style}
-              type="button"
-              onClick={() => onChangeBasemap(style)}
-              className={`px-2 py-1 rounded font-medium transition-colors ${
-                basemap === style
-                  ? 'bg-[var(--surface-3)] text-[var(--text-primary)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              {BASEMAP_LABELS[style]}
-            </button>
-          ))}
-        </div>
+      <div className="absolute top-2.5 right-2.5 sm:top-3 sm:right-3 z-20 flex flex-col items-end gap-1.5 max-w-[calc(100%-116px)] sm:max-w-none">
+        {/* Compact Toggle Button for Mobile / Tablet (<1024px) or Compact Preview */}
+        <button
+          type="button"
+          onClick={() => setIsCompactControlsOpen((prev) => !prev)}
+          aria-expanded={isCompactControlsOpen}
+          aria-label="Toggle map display controls and legend"
+          className={`${
+            compactPreview ? 'flex' : 'flex lg:hidden'
+          } min-h-[44px] md:min-h-[36px] px-2.5 py-1.5 rounded-md bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] shadow-md items-center gap-1.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus-visible:outline-2 focus-visible:outline-[var(--ember)]`}
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5 text-[var(--ember)] shrink-0" />
+          <span className="truncate">
+            {compactPreview ? 'Legend' : `Map Controls · ${mapDisplayMode.toUpperCase()}`}
+          </span>
+          <span className="flex items-center gap-1 shrink-0">
+            <span className="w-2 h-2 bg-[#EF4444] rounded-full inline-block" />
+            <span className="w-2 h-2 bg-[#DC2626] rounded-full inline-block" />
+          </span>
+          {isCompactControlsOpen ? (
+            <ChevronUp className="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0" />
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0" />
+          )}
+        </button>
 
-        {/* NASA FIRMS Live Window Toggle (TODAY UTC vs 24HRS) */}
-        {!compactPreview && onSelectLiveWindow && (
-          <div
-            role="group"
-            aria-label="NASA FIRMS live time window"
-            className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md p-0.5 flex items-center gap-0.5 text-[11px] shadow-md font-mono"
-          >
-            <button
-              type="button"
-              onClick={() => onSelectLiveWindow('today')}
-              className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                liveWindowMode === 'today'
-                  ? 'bg-[var(--ember)] text-white'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              TODAY UTC
-            </button>
-            <button
-              type="button"
-              onClick={() => onSelectLiveWindow('24h')}
-              className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                liveWindowMode === '24h'
-                  ? 'bg-[var(--ember)] text-white'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              24HRS LIVE
-            </button>
+        {/* Full Stack on Desktop (>=1024px) or When Expanded on Tablet/Mobile */}
+        <div
+          className={`${
+            compactPreview
+              ? isCompactControlsOpen
+                ? 'flex'
+                : 'hidden'
+              : isCompactControlsOpen
+              ? 'flex'
+              : 'hidden lg:flex'
+          } flex-col items-end gap-2 max-h-[calc(100dvh-210px)] overflow-y-auto p-0.5`}
+        >
+          <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md p-0.5 flex items-center gap-0.5 text-[11px] shadow-md">
+            {(['satellite', 'terrain', 'reference'] as BasemapStyle[]).map((style) => (
+              <button
+                key={style}
+                type="button"
+                onClick={() => onChangeBasemap(style)}
+                className={`min-h-[34px] lg:min-h-0 px-2 py-1 rounded font-medium transition-colors whitespace-nowrap ${
+                  basemap === style
+                    ? 'bg-[var(--surface-3)] text-[var(--text-primary)]'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {BASEMAP_LABELS[style]}
+              </button>
+            ))}
           </div>
-        )}
 
-        {/* P1 Selectable Map Display Mode (Points vs Grid vs Cluster) */}
-        {!compactPreview && onChangeMapDisplayMode && (
-          <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md p-1 flex flex-col gap-1 text-[11px] shadow-md">
+          {/* NASA FIRMS Live Window Toggle (TODAY UTC vs 24HRS) */}
+          {!compactPreview && onSelectLiveWindow && (
             <div
               role="group"
-              aria-label="Map observation aggregation mode"
-              className="flex items-center gap-0.5 font-mono"
+              aria-label="NASA FIRMS live time window"
+              className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md p-0.5 flex items-center gap-0.5 text-[11px] shadow-md font-mono"
             >
-              {(['points', 'grid', 'cluster'] as MapDisplayMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => onChangeMapDisplayMode(mode)}
-                  className={`px-2 py-1 rounded capitalize font-medium transition-colors ${
-                    mapDisplayMode === mode
-                      ? 'bg-[var(--surface-3)] text-[var(--text-primary)] border border-[var(--ember)]/60'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
-            {(mapDisplayMode === 'grid' || mapDisplayMode === 'cluster') &&
-              onChangeGridResolutionDeg && (
-                <div className="flex items-center justify-between gap-1 px-1 pt-0.5 border-t border-[var(--border-subtle)] text-[10px] font-mono">
-                  <span className="text-[var(--text-muted)]">Cell:</span>
-                  <div className="flex items-center gap-0.5">
-                    {([0.25, 0.5, 1.0, 2.0] as const).map((deg) => (
-                      <button
-                        key={deg}
-                        type="button"
-                        onClick={() => onChangeGridResolutionDeg(deg)}
-                        className={`px-1.5 py-0.5 rounded ${
-                          gridResolutionDeg === deg
-                            ? 'bg-[var(--ember)] text-white font-semibold'
-                            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)]'
-                        }`}
-                      >
-                        {deg}°
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-          </div>
-        )}
-
-        {/* Red Fire Hotspot Legend + Offshore Marine Flare Toggle */}
-        <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md px-2.5 py-2 text-[11px] space-y-1 shadow-md">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 bg-[#EF4444] border border-[#FCA5A5] inline-block rounded-full shrink-0 shadow-[0_0_6px_rgba(239,68,68,0.8)]" />
-            <span className="text-[var(--text-primary)] font-medium">Titik Api · VIIRS C2</span>
-            <span className="text-[var(--text-muted)] font-mono">375 m</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 bg-[#DC2626] border border-[#FCA5A5] inline-block rounded-full shrink-0 shadow-[0_0_6px_rgba(220,38,38,0.8)]" />
-            <span className="text-[var(--text-primary)] font-medium">Titik Api · MODIS C6.1</span>
-            <span className="text-[var(--text-muted)] font-mono">1 km</span>
-          </div>
-          {!excludeOffshore && (
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 bg-[#F59E0B] border border-[#38BDF8] inline-block rounded-full shrink-0" />
-              <span className="text-[var(--text-primary)] font-medium">Offshore Flare / Laut</span>
-            </div>
-          )}
-          {!compactPreview && onToggleExcludeOffshore && (
-            <div className="pt-1 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2 text-[10px]">
-              <span className="text-[var(--text-muted)] font-mono">
-                {excludeOffshore
-                  ? `Offshore hidden (${hotspotsMeta?.excludedOffshoreCount ?? 0})`
-                  : 'Offshore visible'}
-              </span>
               <button
                 type="button"
-                onClick={onToggleExcludeOffshore}
-                aria-label="Toggle offshore marine flare filter"
-                className="px-1.5 py-0.5 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] text-[var(--text-primary)] font-medium border border-[var(--border-subtle)] transition-colors"
+                onClick={() => onSelectLiveWindow('today')}
+                className={`min-h-[34px] lg:min-h-0 px-2.5 py-1 rounded font-medium transition-colors whitespace-nowrap ${
+                  liveWindowMode === 'today'
+                    ? 'bg-[var(--ember)] text-white'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
               >
-                {excludeOffshore ? 'Show' : 'Hide'}
+                TODAY UTC
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelectLiveWindow('24h')}
+                className={`min-h-[34px] lg:min-h-0 px-2.5 py-1 rounded font-medium transition-colors whitespace-nowrap ${
+                  liveWindowMode === '24h'
+                    ? 'bg-[var(--ember)] text-white'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                24HRS LIVE
               </button>
             </div>
           )}
-          {mapDisplayMode !== 'points' && !compactPreview && (
-            <div className="pt-1 border-t border-[var(--border-subtle)] text-[10px] text-[var(--warning)] max-w-[190px] leading-tight">
-              {gridResolutionDeg}° unprojected grid cells are not equal-area normalized across latitudes.
+
+          {/* P1 Selectable Map Display Mode (Points vs Grid vs Cluster) */}
+          {!compactPreview && onChangeMapDisplayMode && (
+            <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md p-1 flex flex-col gap-1 text-[11px] shadow-md">
+              <div
+                role="group"
+                aria-label="Map observation aggregation mode"
+                className="flex items-center gap-0.5 font-mono"
+              >
+                {(['points', 'grid', 'cluster'] as MapDisplayMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => onChangeMapDisplayMode(mode)}
+                    className={`min-h-[34px] lg:min-h-0 px-2 py-1 rounded capitalize font-medium transition-colors ${
+                      mapDisplayMode === mode
+                        ? 'bg-[var(--surface-3)] text-[var(--text-primary)] border border-[var(--ember)]/60'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+              {(mapDisplayMode === 'grid' || mapDisplayMode === 'cluster') &&
+                onChangeGridResolutionDeg && (
+                  <div className="flex items-center justify-between gap-1 px-1 pt-0.5 border-t border-[var(--border-subtle)] text-[10px] font-mono">
+                    <span className="text-[var(--text-muted)]">Cell:</span>
+                    <div className="flex items-center gap-0.5">
+                      {([0.25, 0.5, 1.0, 2.0] as const).map((deg) => (
+                        <button
+                          key={deg}
+                          type="button"
+                          onClick={() => onChangeGridResolutionDeg(deg)}
+                          className={`px-1.5 py-0.5 rounded ${
+                            gridResolutionDeg === deg
+                              ? 'bg-[var(--ember)] text-white font-semibold'
+                              : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)]'
+                          }`}
+                        >
+                          {deg}°
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
             </div>
           )}
+
+          {/* Red Fire Hotspot Legend + Offshore Marine Flare Toggle */}
+          <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md px-2.5 py-2 text-[11px] space-y-1 shadow-md">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 bg-[#EF4444] border border-[#FCA5A5] inline-block rounded-full shrink-0 shadow-[0_0_6px_rgba(239,68,68,0.8)]" />
+              <span className="text-[var(--text-primary)] font-medium">Titik Api · VIIRS C2</span>
+              <span className="text-[var(--text-muted)] font-mono">375 m</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 bg-[#DC2626] border border-[#FCA5A5] inline-block rounded-full shrink-0 shadow-[0_0_6px_rgba(220,38,38,0.8)]" />
+              <span className="text-[var(--text-primary)] font-medium">Titik Api · MODIS C6.1</span>
+              <span className="text-[var(--text-muted)] font-mono">1 km</span>
+            </div>
+            {!excludeOffshore && (
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 bg-[#F59E0B] border border-[#38BDF8] inline-block rounded-full shrink-0" />
+                <span className="text-[var(--text-primary)] font-medium">Offshore Flare / Laut</span>
+              </div>
+            )}
+            {!compactPreview && onToggleExcludeOffshore && (
+              <div className="pt-1 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2 text-[10px]">
+                <span className="text-[var(--text-muted)] font-mono">
+                  {excludeOffshore
+                    ? `Offshore hidden (${hotspotsMeta?.excludedOffshoreCount ?? 0})`
+                    : 'Offshore visible'}
+                </span>
+                <button
+                  type="button"
+                  onClick={onToggleExcludeOffshore}
+                  aria-label="Toggle offshore marine flare filter"
+                  className="px-1.5 py-0.5 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] text-[var(--text-primary)] font-medium border border-[var(--border-subtle)] transition-colors"
+                >
+                  {excludeOffshore ? 'Show' : 'Hide'}
+                </button>
+              </div>
+            )}
+            {mapDisplayMode !== 'points' && !compactPreview && (
+              <div className="pt-1 border-t border-[var(--border-subtle)] text-[10px] text-[var(--warning)] max-w-[190px] leading-tight">
+                {gridResolutionDeg}° unprojected grid cells are not equal-area normalized across latitudes.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Bottom-Left Map Scale and Coordinate Readout (Section 5.1) */}
       <div
-        className={`absolute bottom-2.5 left-2.5 z-20 ${
-          compactPreview ? 'max-w-[calc(100%-135px)]' : 'max-w-[calc(100%-390px)]'
+        className={`absolute bottom-2 left-2 sm:bottom-2.5 sm:left-2.5 z-20 ${
+          compactPreview
+            ? 'max-w-[calc(100%-130px)]'
+            : 'max-w-[calc(100%-132px)] sm:max-w-[calc(100%-210px)] lg:max-w-[calc(100%-390px)]'
         } overflow-hidden bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md px-2 py-1 flex items-center gap-1.5 md:gap-2 text-[10px] md:text-[11px] font-mono tabular-nums text-[var(--text-secondary)] shadow-md`}
       >
         <div className="flex items-center gap-1.5 shrink-0">
-          <div className="w-6 md:w-10 h-1.5 border-b-2 border-l-2 border-r-2 border-[var(--text-secondary)]" />
+          <div className="w-5 sm:w-6 md:w-10 h-1.5 border-b-2 border-l-2 border-r-2 border-[var(--text-secondary)]" />
           <span>{scaleKm} km</span>
         </div>
         <span className="text-[var(--border-subtle)] shrink-0">|</span>
         <span className="truncate">
           {compactPreview
             ? `${cursorGeo.lat.toFixed(2)}°, ${cursorGeo.lng.toFixed(2)}°`
-            : `${cursorGeo.lat.toFixed(4)}°, ${cursorGeo.lng.toFixed(4)}° (WGS84)`}
+            : `${cursorGeo.lat.toFixed(2)}°, ${cursorGeo.lng.toFixed(2)}°`}
+          <span className="hidden md:inline"> (WGS84)</span>
         </span>
         {!compactPreview && (
           <>
             <span className="text-[var(--border-subtle)] hidden xl:inline shrink-0">|</span>
             <span className="hidden xl:inline shrink-0">Datum: EPSG:4326 → OSM EPSG:3857</span>
-            <span className="text-[var(--border-subtle)] shrink-0">|</span>
-            <span className="truncate">
+            <span className="text-[var(--border-subtle)] hidden sm:inline shrink-0">|</span>
+            <span className="hidden sm:inline truncate">
               {mapDisplayMode !== 'points' && gridData
                 ? `${mapDisplayMode.toUpperCase()} ${gridData.cell_size_deg}°: ${gridData.cell_count.toLocaleString()} cells · M:${gridData.total_detections_modis.toLocaleString()} V:${gridData.total_detections_viirs.toLocaleString()}`
                 : hotspotsMeta
@@ -1303,10 +1360,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       </div>
 
       {/* Bottom-Right OpenStreetMap, Satellite & NASA Source Attribution (Section 5.1) */}
-      <div className="absolute bottom-2.5 right-2.5 z-20 bg-[var(--surface-1)]/90 border border-[var(--border-subtle)] rounded px-2 py-1 text-[10px] text-[var(--text-muted)]">
-        {compactPreview
-          ? '© OSM · NASA FIRMS'
-          : '© OpenStreetMap contributors · Satellite Imagery · NASA FIRMS (MODIS C6.1 & VIIRS C2)'}
+      <div
+        title="© OpenStreetMap contributors · Satellite Imagery · NASA FIRMS (MODIS C6.1 & VIIRS C2)"
+        className="absolute bottom-2.5 right-2.5 z-20 bg-[var(--surface-1)]/90 border border-[var(--border-subtle)] rounded px-2 py-1 text-[10px] text-[var(--text-muted)] whitespace-nowrap"
+      >
+        © OSM · NASA FIRMS
       </div>
     </div>
   );

@@ -23,38 +23,44 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
   const isModis = observation.sensor === 'MODIS';
 
   return (
-    <aside
-      aria-label="Hotspot Observation Inspector"
-      data-testid="observation-inspector"
-      className="w-[380px] max-w-[94vw] bg-[var(--surface-1)] border-l border-[var(--border-subtle)] h-full flex flex-col justify-between z-30 shadow-2xl overflow-y-auto"
-    >
-      <div className="p-4 space-y-4">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
-          <div>
-            <div className="flex items-center gap-2">
-              <span
-                className={`w-3 h-3 inline-block ${
-                  isModis ? 'bg-[#FFB454] rounded-[1px]' : 'bg-[#61BDE0] rounded-full'
-                }`}
-              />
-              <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
-                Hotspot Observation Inspector
-              </h2>
+    <>
+      <div
+        className="fixed inset-0 bg-black/45 z-30 lg:hidden"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside
+        aria-label="Hotspot Observation Inspector"
+        data-testid="observation-inspector"
+        className="fixed inset-y-0 right-0 z-40 lg:relative lg:inset-auto lg:z-30 w-[380px] max-w-[92vw] bg-[var(--surface-1)] border-l border-[var(--border-subtle)] h-full flex flex-col justify-between shadow-2xl overflow-y-auto shrink-0"
+      >
+        <div className="p-4 space-y-4">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
+            <div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-3 h-3 inline-block ${
+                    isModis ? 'bg-[#FFB454] rounded-[1px]' : 'bg-[#61BDE0] rounded-full'
+                  }`}
+                />
+                <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
+                  Hotspot Observation Inspector
+                </h2>
+              </div>
+              <div className="text-[11px] font-mono text-[var(--text-muted)] mt-0.5 break-all">
+                {observation.observation_id}
+              </div>
             </div>
-            <div className="text-[11px] font-mono text-[var(--text-muted)] mt-0.5 break-all">
-              {observation.observation_id}
-            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close Observation Inspector"
+              className="min-w-[44px] min-h-[44px] md:min-w-7 md:min-h-7 md:w-7 md:h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)] shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close Observation Inspector"
-            className="w-7 h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)] shrink-0"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
 
         {/* Scientific Non-Claim Banner (Section 8) */}
         <div className="p-2.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] flex items-start gap-2 text-[11px] text-[var(--text-secondary)]">
@@ -278,10 +284,11 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
         </div>
       </div>
 
-      <div className="p-3 border-t border-[var(--border-subtle)] bg-[var(--surface-2)]/40 text-[11px] text-[var(--text-muted)] flex items-center justify-between">
+      <div className="p-3 border-t border-[var(--border-subtle)] bg-[var(--surface-2)]/40 text-[11px] text-[var(--text-muted)] flex items-center justify-between pb-safe">
         <span>Source Row #{observation.source_row_number ?? '—'}</span>
         <span>WGS84 / UTC Canonical Schema</span>
       </div>
     </aside>
+    </>
   );
 };

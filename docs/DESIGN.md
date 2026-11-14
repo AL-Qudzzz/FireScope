@@ -421,11 +421,12 @@ Never silently convert a missing result to a numeric zero. Never silently fall b
 
 | Breakpoint | Layout behavior |
 |---|---|
-| ≥ 1280 px | Expanded sidebar; calendar and map side-by-side; lower charts in two columns |
-| 768–1279 px | Collapsible sidebar; calendar takes full width or 7/12 with compact map; chart panels stack as needed |
-| < 768 px | Top compact header; AOI/filter controls in accessible bottom sheet or drawer; calendar full width; map becomes a collapsible/toggle panel; detail uses full-height sheet |
+| **≥ 1280 px (`xl` / `2xl`)** | Full 5-tab header navigation (`Map Explorer`, `AOI Analysis`, `Sources`, `Methods`, `About`), center AOI + Date quick triggers, live FIRMS badge, and utility buttons; expanded upper-right Map HUD (`Basemap`, `Live Window`, `Points/Grid/Cluster`, `Hotspot Legend`); docked side-by-side right-hand drawers (`LayerDrawer`, `ObservationInspector`); 4-column KPI grid and side-by-side analysis panels. |
+| **1024–1279 px (`lg`)** | Compact `[Map \| Analysis]` header switcher (with `Sources`, `Methods`, and `About` in the primary navigation drawer), center AOI + Date quick triggers, expanded upper-right Map HUD, and docked right-hand drawers (`relative`). |
+| **768–1023 px (`md` tablet & `844×390` landscape)** | Compact header (`Menu`, `FireScope`, `[Map \| Analysis]`, live FIRMS badge, `Share`, `Theme`, `Help`); single-line Context & Provenance strip below header; collapsible upper-right `Map Controls · POINTS / Legend` toggle button (`lg:hidden`) so map canvas remains unobstructed; right-hand `LayerDrawer` and `ObservationInspector` transition to slide-over overlay drawers (`fixed inset-y-0 right-0 z-40`) with a backdrop scrim (`z-30`). |
+| **< 768 px (`360×800`, `390×844`, `430×932` mobile)** | `44×44 px` touch targets on primary header and map controls; concise Context Strip with `Provenance` disclosure toggle (`aria-expanded`); compact 2×2 upper-left zoom/extent cluster; collapsible upper-right `Map Controls / Legend` drawer; floating `AoiSearchPanel` and `MeasurementPanel` anchored between `inset-x-2.5` and `bottom-[92px]`; full-height slide-over overlay sheets for `LayerDrawer`, `ObservationInspector`, and `PrimaryNavigationDrawer` (including a 2×2 Quick Workspace Tools grid). |
 
-On mobile, do not simply shrink the desktop map/calendar split. Reorder content around the primary task and keep filters discoverable.
+On mobile and tablet, never crush the `<main>` map container with in-flow side drawers, and always synchronize Leaflet dimensions on panel transitions, window `resize`, and `orientationchange` events.
 
 ---
 

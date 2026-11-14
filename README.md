@@ -70,6 +70,8 @@ Rather than flattening distinct satellite sensors into an unvalidated single num
 │   ├── WHITEBOX_TESTING_REPORT.md
 │   ├── RELEASE_READINESS.md
 │   ├── FINAL_QA_REPORT.md
+│   ├── RESPONSIVE_UI_AUDIT.md
+│   ├── RESPONSIVE_QA_REPORT.md
 │   ├── SECURITY_AUDIT.md
 │   ├── SCIENTIFIC_DATA_AUDIT.md
 │   ├── DEPLOYMENT.md
@@ -250,6 +252,8 @@ Full parameter and response schemas are documented in [`docs/API_CONTRACT.md`](.
 - [`docs/WHITEBOX_TESTING_REPORT.md`](./docs/WHITEBOX_TESTING_REPORT.md) — Full white-box audit, HTTP contract verification, and browser check report.
 - [`docs/RELEASE_READINESS.md`](./docs/RELEASE_READINESS.md) — `v1.0.0-rc1` → `v1.0.0` release audit, dependency license inventory, and Go/No-Go gates.
 - [`docs/FINAL_QA_REPORT.md`](./docs/FINAL_QA_REPORT.md) — Multi-viewport (`1440×900`, `768×1024`, `390×844`), accessibility, concurrency, and failure-recovery QA report.
+- [`docs/RESPONSIVE_UI_AUDIT.md`](./docs/RESPONSIVE_UI_AUDIT.md) — Pre-Phase 9 responsive root-cause analysis and component remediation specification.
+- [`docs/RESPONSIVE_QA_REPORT.md`](./docs/RESPONSIVE_QA_REPORT.md) — Full 9-viewport matrix (`1920×1080` down to `360×800` & `844×390`) verification report.
 - [`docs/SECURITY_AUDIT.md`](./docs/SECURITY_AUDIT.md) — Secret isolation, HTTP security headers, injection boundary tests, and payload sanitization audit.
 - [`docs/SCIENTIFIC_DATA_AUDIT.md`](./docs/SCIENTIFIC_DATA_AUDIT.md) — Immutable NASA archive SHA-256 verification and scientific guardrail compliance audit.
 - [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) — Production deployment, `systemd`/Nginx setup, backup/restore, and rollback runbook.

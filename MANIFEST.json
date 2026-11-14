@@ -22,6 +22,8 @@
     "docs/PROJECT_GRAPH.md",
     "docs/RELEASE_NOTES.md",
     "docs/RELEASE_READINESS.md",
+    "docs/RESPONSIVE_QA_REPORT.md",
+    "docs/RESPONSIVE_UI_AUDIT.md",
     "docs/SCIENTIFIC_DATA_AUDIT.md",
     "docs/SECURITY_AUDIT.md",
     "docs/TESTING.md",
@@ -35,7 +37,8 @@
     "VIIRS Collection 2 User Guide v1.2",
     "MODIS/VIIRS peer-reviewed comparison references",
     "platform continuity and NRT/Standard deduplication rules",
-    "Phase 8 release readiness, QA, security, scientific data, and deployment audits"
+    "Phase 8 release readiness, QA, security, scientific data, and deployment audits",
+    "Pre-Phase 9 9-viewport responsive UI remediation and QA audit"
   ],
   "caveat": "The challenge Resources tab is client-rendered; its complete resource list is not independently enumerated. Verify in browser before claiming completeness.",
   "research_document": "docs/TECHNICAL_RESEARCH.md",

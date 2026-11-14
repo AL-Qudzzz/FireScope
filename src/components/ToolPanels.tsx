@@ -134,7 +134,7 @@ export const MapToolDock: React.FC<MapToolDockProps> = ({
     <div
       role="toolbar"
       aria-label="Map workspace tools"
-      className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[10px] p-1.5 flex items-center gap-1 shadow-xl overflow-x-auto max-w-[95vw]"
+      className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[10px] p-1 sm:p-1.5 flex items-center gap-1 shadow-xl overflow-x-auto no-scrollbar max-w-[calc(100vw-16px)] sm:max-w-[95vw]"
     >
       {dockButtons.map((btn) => (
         <button
@@ -142,7 +142,7 @@ export const MapToolDock: React.FC<MapToolDockProps> = ({
           type="button"
           onClick={btn.onClick}
           aria-pressed={btn.active}
-          className={`h-10 px-3 rounded-[6px] flex items-center gap-1.5 text-[12px] font-medium transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[var(--ember)] ${
+          className={`min-h-[44px] md:min-h-0 h-11 md:h-10 px-2.5 sm:px-3 rounded-[6px] flex items-center gap-1.5 text-[11px] sm:text-[12px] font-medium transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[var(--ember)] ${
             btn.active
               ? 'bg-[var(--ember)] text-white shadow-xs'
               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)]'
@@ -256,10 +256,10 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
   return (
     <section
       aria-label="Area of Interest selection panel"
-      className="w-[340px] max-w-[92vw] bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-xl flex flex-col overflow-hidden"
+      className="w-full sm:w-[340px] max-w-full sm:max-w-[92vw] max-h-[calc(100dvh-290px)] sm:max-h-[calc(100dvh-150px)] bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-xl flex flex-col overflow-hidden"
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
+      <div className="px-4 py-2.5 sm:py-3 border-b border-[var(--border-subtle)] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <Compass className="w-4 h-4 text-[var(--ember)]" />
           <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
@@ -270,14 +270,14 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
           type="button"
           onClick={onClose}
           aria-label="Close Area of Interest panel"
-          className="w-7 h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)]"
+          className="min-w-[44px] min-h-[44px] md:min-w-7 md:min-h-7 md:w-7 md:h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)]"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* Mode Tabs */}
-      <div className="px-4 pt-3">
+      <div className="px-4 pt-2.5 sm:pt-3 shrink-0">
         <div className="grid grid-cols-3 bg-[var(--app-bg)] p-0.5 rounded-[6px] border border-[var(--border-subtle)] text-[12px]">
           {(['search', 'coordinates', 'draw'] as const).map((t) => (
             <button
@@ -302,7 +302,7 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
       </div>
 
       {/* Tab Body */}
-      <div className="p-4 space-y-3 max-h-[380px] overflow-y-auto">
+      <div className="p-3 sm:p-4 space-y-3 flex-1 min-h-0 sm:max-h-[420px] overflow-y-auto">
         {tab === 'search' && (
           <div className="space-y-2.5">
             <div className="relative">
@@ -671,7 +671,7 @@ export const MeasurementPanel: React.FC<MeasurementPanelProps> = ({
   return (
     <section
       aria-label="Geospatial measurement tool"
-      className="w-[330px] max-w-[92vw] bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-xl p-4 space-y-3"
+      className="w-full sm:w-[330px] max-w-full sm:max-w-[92vw] max-h-[calc(100dvh-290px)] sm:max-h-[calc(100dvh-150px)] overflow-y-auto bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-xl p-3.5 sm:p-4 space-y-3"
     >
       <div className="flex items-center justify-between pb-2 border-b border-[var(--border-subtle)]">
         <div className="flex items-center gap-2">
@@ -684,7 +684,7 @@ export const MeasurementPanel: React.FC<MeasurementPanelProps> = ({
           type="button"
           onClick={onClose}
           aria-label="Close measurement panel"
-          className="w-7 h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          className="min-w-[44px] min-h-[44px] md:min-w-7 md:min-h-7 md:w-7 md:h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
         >
           <X className="w-4 h-4" />
         </button>
@@ -856,27 +856,33 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
   };
 
   return (
-    <aside
-      aria-label="Layers and sensor controls"
-      className="w-[360px] max-w-[92vw] bg-[var(--surface-1)] border-l border-[var(--border-subtle)] h-full flex flex-col justify-between z-20 shadow-xl overflow-y-auto"
-    >
-      <div className="p-4 space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-[var(--ember)]" />
-            <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
-              Layers &amp; Sensor Filters
-            </h2>
+    <>
+      <div
+        className="fixed inset-0 bg-black/45 z-30 lg:hidden"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside
+        aria-label="Layers and sensor controls"
+        className="fixed inset-y-0 right-0 z-40 lg:relative lg:inset-auto lg:z-20 w-[360px] max-w-[90vw] bg-[var(--surface-1)] border-l border-[var(--border-subtle)] h-full flex flex-col justify-between shadow-2xl lg:shadow-xl overflow-y-auto shrink-0"
+      >
+        <div className="p-4 space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-[var(--ember)]" />
+              <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
+                Layers &amp; Sensor Filters
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close Layers drawer"
+              className="min-w-[44px] min-h-[44px] md:min-w-7 md:min-h-7 md:w-7 md:h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close Layers drawer"
-            className="w-7 h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
 
         {/* Overview vs Analyst Control Density Switch (Section 6.4) */}
         <div className="flex items-center justify-between bg-[var(--surface-2)] p-2.5 rounded-[6px] border border-[var(--border-subtle)]">
@@ -1313,7 +1319,7 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
         </div>
       </div>
 
-      <div className="p-4 border-t border-[var(--border-subtle)] bg-[var(--surface-2)]/40 flex items-center justify-between">
+      <div className="p-4 border-t border-[var(--border-subtle)] bg-[var(--surface-2)]/40 flex items-center justify-between pb-safe">
         <button
           type="button"
           onClick={() =>
@@ -1336,6 +1342,7 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
         </span>
       </div>
     </aside>
+    </>
   );
 };
 
@@ -1412,11 +1419,11 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
   return (
     <section
       aria-label="Timeline and date range navigation"
-      className="w-full max-w-[1060px] bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-2xl p-3.5 space-y-3"
+      className="w-full max-w-[1060px] max-h-[60dvh] overflow-y-auto bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-2xl p-2.5 sm:p-3.5 space-y-2.5 sm:space-y-3"
     >
       {/* Top Row: Presets + Date Inputs + Granularity + Close */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[var(--border-subtle)]">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--border-subtle)]">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
           {presets.map((p) => {
             const isCurrent =
               queryState.startDate === p.startDate &&
@@ -1434,7 +1441,7 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
                     selectedBinKey: null,
                   })
                 }
-                className={`px-2.5 py-1 rounded-[6px] text-[11px] font-medium transition-colors ${
+                className={`px-2 sm:px-2.5 py-1 rounded-[6px] text-[10px] sm:text-[11px] font-medium transition-colors ${
                   isCurrent
                     ? 'bg-[var(--ember)] text-white'
                     : 'bg-[var(--surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -1446,8 +1453,8 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
           })}
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-[11px] font-mono">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto justify-between sm:justify-end">
+          <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-mono">
             <input
               type="date"
               value={queryState.startDate}
@@ -1457,7 +1464,7 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
                 e.target.value && onUpdateQueryState({ startDate: e.target.value })
               }
               aria-label="Start date (UTC)"
-              className="h-7 px-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] text-[var(--text-primary)]"
+              className="h-7 px-1.5 sm:px-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] text-[var(--text-primary)]"
             />
             <span className="text-[var(--text-muted)]">→</span>
             <input
@@ -1469,48 +1476,50 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
                 e.target.value && onUpdateQueryState({ endDate: e.target.value })
               }
               aria-label="End date (UTC)"
-              className="h-7 px-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] text-[var(--text-primary)]"
+              className="h-7 px-1.5 sm:px-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] text-[var(--text-primary)]"
             />
           </div>
 
-          <div className="flex bg-[var(--app-bg)] p-0.5 rounded-[6px] border border-[var(--border-subtle)] text-[11px]">
-            {(['day', 'week', 'month'] as Granularity[]).map((g) => (
-              <button
-                key={g}
-                type="button"
-                onClick={() =>
-                  onUpdateQueryState({ granularity: g, selectedBinKey: null })
-                }
-                className={`px-2 py-0.5 rounded capitalize font-medium ${
-                  queryState.granularity === g
-                    ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
-                    : 'text-[var(--text-secondary)]'
-                }`}
-              >
-                {g}
-              </button>
-            ))}
-          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="flex bg-[var(--app-bg)] p-0.5 rounded-[6px] border border-[var(--border-subtle)] text-[11px]">
+              {(['day', 'week', 'month'] as Granularity[]).map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() =>
+                    onUpdateQueryState({ granularity: g, selectedBinKey: null })
+                  }
+                  className={`px-2 py-0.5 rounded capitalize font-medium ${
+                    queryState.granularity === g
+                      ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
+                      : 'text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close timeline tray"
-            className="w-7 h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          >
-            <X className="w-4 h-4" />
-          </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close timeline tray"
+              className="min-w-[36px] min-h-[36px] md:min-w-7 md:min-h-7 md:w-7 md:h-7 rounded flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Scrubber & Mini Bar Strip */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
         <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
             onClick={() => stepBin(-1)}
             aria-label="Previous time bin"
-            className="w-7 h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--text-primary)]"
+            className="w-8 h-8 sm:w-7 sm:h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--text-primary)]"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -1524,7 +1533,7 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
             }}
             aria-label={isPlaying ? 'Pause step playback' : 'Step forward'}
             title="Step through selected time bins"
-            className="w-7 h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--ember)]"
+            className="w-8 h-8 sm:w-7 sm:h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--ember)]"
           >
             {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
           </button>
@@ -1532,14 +1541,14 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
             type="button"
             onClick={() => stepBin(1)}
             aria-label="Next time bin"
-            className="w-7 h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--text-primary)]"
+            className="w-8 h-8 sm:w-7 sm:h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--text-primary)]"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
         {/* Interactive Bin Bar Strip */}
-        <div className="flex-1 flex items-end gap-1 h-12 bg-[var(--app-bg)] px-2 py-1.5 rounded-[6px] border border-[var(--border-subtle)] overflow-x-auto">
+        <div className="flex-1 min-w-[160px] flex items-end gap-1 h-11 sm:h-12 bg-[var(--app-bg)] px-2 py-1.5 rounded-[6px] border border-[var(--border-subtle)] overflow-x-auto">
           {series.map((b) => {
             const isSelected = currentBin?.bin_key === b.bin_key;
             const modisVal = b.values.MODIS ?? 0;
@@ -1582,9 +1591,9 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
         </div>
 
         {/* Selected Bin Readout & Open Full Calendar CTA */}
-        <div className="shrink-0 flex items-center gap-3">
+        <div className="w-full sm:w-auto shrink-0 flex items-center justify-between sm:justify-end gap-3 pt-1 sm:pt-0">
           {currentBin && (
-            <div className="text-right font-mono text-[11px] tabular-nums">
+            <div className="text-left sm:text-right font-mono text-[11px] tabular-nums">
               <div className="font-semibold text-[var(--text-primary)]">
                 {currentBin.label} (UTC)
               </div>

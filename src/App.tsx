@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   Calendar,
   Check,
+  ChevronDown,
+  ChevronUp,
   Compass,
   Download,
   ExternalLink,
@@ -350,6 +352,7 @@ export default function App() {
   const [isTimelineOpen, setIsTimelineOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [isCaptureModalOpen, setIsCaptureModalOpen] = useState(false);
+  const [isContextStripExpanded, setIsContextStripExpanded] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Map appearance & interaction states
@@ -383,10 +386,14 @@ export default function App() {
           setInteractionMode('pan');
         } else if (activeDockTool) {
           setActiveDockTool(null);
+        } else if (isTimelineOpen) {
+          setIsTimelineOpen(false);
         } else if (isLayersOpen) {
           setIsLayersOpen(false);
         } else if (isNavDrawerOpen) {
           setIsNavDrawerOpen(false);
+        } else if (isContextStripExpanded) {
+          setIsContextStripExpanded(false);
         }
       }
     };
@@ -398,8 +405,10 @@ export default function App() {
     queryState.selectedObservationId,
     interactionMode,
     activeDockTool,
+    isTimelineOpen,
     isLayersOpen,
     isNavDrawerOpen,
+    isContextStripExpanded,
   ]);
 
   // Active AOI is derived near queryState above so viewport sync stays consistent.
@@ -699,7 +708,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-[var(--app-bg)] text-[var(--text-primary)]">
+    <div className="h-[100dvh] w-full max-w-full overflow-hidden flex flex-col bg-[var(--app-bg)] text-[var(--text-primary)]">
       {/* 1. Global Application Header (Section 5.2) */}
       <GlobalHeader
         activeRoute={activeRoute}
@@ -728,36 +737,85 @@ export default function App() {
       />
 
       {/* 2. Slim Context & Provenance Strip (Section 5.3) */}
-      <div className="h-8 px-3 md:px-4 bg-[var(--surface-2)] border-b border-[var(--border-subtle)] flex items-center justify-between gap-3 text-[11px] shrink-0 overflow-x-auto whitespace-nowrap">
-        <div className="flex items-center gap-2 text-[var(--text-secondary)]">
-          <span className="font-semibold text-[var(--text-primary)]">
-            AOI: {activeAoi.name}
-          </span>
-          <span aria-hidden="true">·</span>
-          <span className="font-mono">
-            UTC Window: {queryState.startDate} to {queryState.endDate} ({queryState.granularity})
-          </span>
-          <span aria-hidden="true">·</span>
-          <span>
-            Sensors:{' '}
-            <strong className="font-mono text-[var(--text-primary)]">
-              {queryState.sensor === 'ALL' ? 'MODIS + VIIRS (Separate M2)' : queryState.sensor}
-            </strong>
-          </span>
-          {queryState.platforms.includes('SNPP') && queryState.endDate > '2026-11-02' && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span className="text-[var(--warning)] font-medium">
-                Note: VIIRS S-NPP archive ends 2026-11-02
-              </span>
-            </>
-          )}
+      <div className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] shrink-0 z-20">
+        {/* Desktop & Tablet strip (>= 768px) */}
+        <div className="hidden md:flex h-8 px-3 md:px-4 items-center justify-between gap-3 text-[11px] overflow-x-auto no-scrollbar whitespace-nowrap">
+          <div className="flex items-center gap-2 text-[var(--text-secondary)]">
+            <span className="font-semibold text-[var(--text-primary)]">
+              AOI: {activeAoi.name}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono">
+              UTC Window: {queryState.startDate} to {queryState.endDate} ({queryState.granularity})
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              Sensors:{' '}
+              <strong className="font-mono text-[var(--text-primary)]">
+                {queryState.sensor === 'ALL' ? 'MODIS + VIIRS (Separate M2)' : queryState.sensor}
+              </strong>
+            </span>
+            {queryState.platforms.includes('SNPP') && queryState.endDate > '2026-11-02' && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-[var(--warning)] font-medium">
+                  Note: VIIRS S-NPP archive ends 2026-11-02
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 font-mono text-[var(--text-muted)] shrink-0">
+            <span>Latest acq: {dataStatus.latest_acquisition_utc.slice(0, 16).replace('T', ' ')}Z</span>
+            <span aria-hidden="true">·</span>
+            <span>Method: {calendarAnalytics.method.id}</span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 font-mono text-[var(--text-muted)]">
-          <span>Latest acq: {dataStatus.latest_acquisition_utc.slice(0, 16).replace('T', ' ')}Z</span>
-          <span aria-hidden="true">·</span>
-          <span>Method: {calendarAnalytics.method.id}</span>
+        {/* Mobile compact bar + collapsible provenance details (< 768px) */}
+        <div className="md:hidden px-2.5 py-1 flex flex-col gap-1 text-[11px]">
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0 truncate text-[var(--text-secondary)]">
+              <span className="font-semibold text-[var(--text-primary)] truncate">
+                {activeAoi.name}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono text-[10px] shrink-0">
+                {queryState.startDate} → {queryState.endDate}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsContextStripExpanded((prev) => !prev)}
+              aria-expanded={isContextStripExpanded}
+              aria-label="Toggle provenance and sensor details"
+              className="px-2 py-0.5 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)] text-[10px] font-medium text-[var(--text-primary)] flex items-center gap-1 shrink-0"
+            >
+              <span>Provenance</span>
+              {isContextStripExpanded ? (
+                <ChevronUp className="w-3 h-3 text-[var(--text-secondary)]" />
+              ) : (
+                <ChevronDown className="w-3 h-3 text-[var(--text-secondary)]" />
+              )}
+            </button>
+          </div>
+
+          {isContextStripExpanded && (
+            <div className="pt-1.5 pb-1 border-t border-[var(--border-subtle)] grid grid-cols-1 gap-1 text-[10px] text-[var(--text-secondary)] font-mono">
+              <div>
+                UTC Window: <strong className="text-[var(--text-primary)]">{queryState.startDate} to {queryState.endDate} ({queryState.granularity})</strong>
+              </div>
+              <div>
+                Sensors: <strong className="text-[var(--text-primary)]">{queryState.sensor === 'ALL' ? 'MODIS + VIIRS (Separate M2)' : queryState.sensor}</strong> · Method: <strong className="text-[var(--text-primary)]">{calendarAnalytics.method.id}</strong>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>Latest acq: {dataStatus.latest_acquisition_utc.slice(0, 16).replace('T', ' ')}Z</span>
+                {queryState.platforms.includes('SNPP') && queryState.endDate > '2026-11-02' && (
+                  <span className="text-[var(--warning)]">VIIRS S-NPP archive ends 2026-11-02</span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -765,7 +823,7 @@ export default function App() {
       {toastMessage && (
         <div
           role="status"
-          className="fixed top-24 right-4 z-50 bg-[var(--surface-1)] border border-[var(--ember)] text-[var(--text-primary)] px-3.5 py-2 rounded-[6px] shadow-xl text-[12px] flex items-center gap-2"
+          className="fixed top-24 right-4 z-50 bg-[var(--surface-1)] border border-[var(--ember)] text-[var(--text-primary)] px-3.5 py-2 rounded-[6px] shadow-xl text-[12px] flex items-center gap-2 max-w-[calc(100vw-32px)]"
         >
           <Check className="w-4 h-4 text-[var(--success)] shrink-0" />
           <span>{toastMessage}</span>
@@ -780,15 +838,30 @@ export default function App() {
         onNavigate={setActiveRoute}
         activeAoi={activeAoi}
         onSelectPresetAoi={handleSelectPresetAoi}
+        onOpenAoiTool={() => {
+          if (activeRoute !== 'map') {
+            setActiveRoute('map');
+          }
+          setActiveDockTool('aoi');
+        }}
+        onOpenTimelineTool={() => {
+          if (activeRoute === 'map') {
+            setIsTimelineOpen(true);
+          } else {
+            setActiveRoute('analysis');
+          }
+        }}
+        onShareView={handleShareView}
+        onOpenHelpModal={() => setIsHelpModalOpen(true)}
       />
 
       {/* 3. Main Workspace Content */}
-      <main className="flex-1 relative overflow-hidden flex">
+      <main className="flex-1 relative overflow-hidden flex min-h-0">
         {/* WORKSPACE 1: MAP EXPLORER (/map) */}
         {activeRoute === 'map' && (
-          <div className="relative flex-1 h-full flex overflow-hidden">
+          <div className="relative flex-1 h-full flex overflow-hidden min-w-0">
             {/* Dominant Map Canvas */}
-            <div className="relative flex-1 h-full">
+            <div className="relative flex-1 h-full min-w-0">
               <MapCanvas
                 activeAoi={activeAoi}
                 observations={mapObservations}
@@ -823,7 +896,7 @@ export default function App() {
 
               {/* Floating Left Task Panel (AOI Search/Coordinates/Draw or Measure) — Section 5.1 */}
               {activeDockTool === 'aoi' && (
-                <div className="absolute top-3 left-14 z-20">
+                <div className="absolute inset-x-2.5 bottom-[92px] sm:inset-x-auto sm:bottom-auto sm:top-3 sm:left-16 md:left-14 z-30">
                   <AoiSearchPanel
                     activeAoi={activeAoi}
                     savedAois={savedAois}
@@ -860,7 +933,7 @@ export default function App() {
               )}
 
               {activeDockTool === 'measure' && (
-                <div className="absolute top-3 left-14 z-20">
+                <div className="absolute inset-x-2.5 bottom-[92px] sm:inset-x-auto sm:bottom-auto sm:top-3 sm:left-16 md:left-14 z-30">
                   <MeasurementPanel
                     interactionMode={interactionMode}
                     onSetInteractionMode={setInteractionMode}
@@ -880,7 +953,7 @@ export default function App() {
               )}
 
               {/* Bottom Timeline Tray + Persistent Tool Dock Stack */}
-              <div className="absolute bottom-11 left-1/2 -translate-x-1/2 z-20 w-full max-w-[1060px] px-3 flex flex-col items-center gap-2 pointer-events-none">
+              <div className="absolute bottom-9 sm:bottom-11 left-1/2 -translate-x-1/2 z-20 w-full max-w-[1060px] px-2 sm:px-3 flex flex-col items-center gap-1.5 sm:gap-2 pointer-events-none pb-safe">
                 {isTimelineOpen && (
                   <div className="w-full pointer-events-auto">
                     <TimelineTray
@@ -896,7 +969,7 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="pointer-events-auto">
+                <div className="pointer-events-auto max-w-full">
                   <MapToolDock
                     activeTool={activeDockTool}
                     onSelectTool={(tool) => {
