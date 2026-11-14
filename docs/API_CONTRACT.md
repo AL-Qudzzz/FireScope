@@ -4,7 +4,7 @@ Base path `/api/v1`; JSON; UTC ISO-8601 timestamps; WGS84 coordinates. Validate 
 
 ## `GET /health`
 ```json
-{"status":"ok","service":"firescope-api","version":"0.1.0"}
+{"status":"ok","service":"firescope-api","version":"1.0.0"}
 ```
 
 ## `GET /api/v1/data/status`

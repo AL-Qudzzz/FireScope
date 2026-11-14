@@ -596,7 +596,20 @@ async function computeServerCalendarAnalytics(params: {
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.disable('x-powered-by');
+
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    if (req.path.startsWith('/api/') || req.path === '/health') {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    next();
+  });
+
+  app.use(express.json({ limit: '16kb' }));
 
   ensureLiveFirmsLoaded().catch(() => {});
   ensureLiveEonetLoaded().catch(() => {});
@@ -607,7 +620,7 @@ async function startServer() {
     res.json({
       status: 'ok',
       service: 'firescope-api',
-      version: '1.2.0',
+      version: '1.0.0',
       parquet_available: Boolean(manifest?.available),
       parquet_canonical_rows: manifest?.canonical_rows_total ?? 0,
       live_firms_connected: Boolean(cachedFirmsSnapshot?.connected),
@@ -1722,7 +1735,42 @@ async function startServer() {
     });
   });
 
-  const PORT = 3000;
+  // Global sanitized error handler (prevents stack trace or sensitive path leakage)
+  app.use(
+    (
+      err: Error & { status?: number; type?: string },
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction
+    ) => {
+      if (err instanceof SyntaxError && 'body' in err) {
+        res.status(400).json({
+          error: {
+            code: 'INVALID_JSON',
+            message: 'Malformed JSON request payload.',
+          },
+        });
+        return;
+      }
+      if (err?.type === 'entity.too.large' || err?.status === 413) {
+        res.status(413).json({
+          error: {
+            code: 'PAYLOAD_TOO_LARGE',
+            message: 'Request payload exceeds the 16 KB limit.',
+          },
+        });
+        return;
+      }
+      res.status(500).json({
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected server error occurred.',
+        },
+      });
+    }
+  );
+
+  const PORT = Number(process.env.PORT) || 3000;
   const httpServer = http.createServer(app);
 
   if (process.env.NODE_ENV !== 'production') {

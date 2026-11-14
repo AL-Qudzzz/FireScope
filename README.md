@@ -58,7 +58,7 @@ Rather than flattening distinct satellite sensors into an unvalidated single num
 ├── metadata.json                    # Application metadata & capability declarations
 ├── AGENTS.md                        # AI agent & scientific engineering guardrails
 ├── MANIFEST.json                    # Documentation & research metadata registry
-├── docs/                            # Project specifications, methodology, contracts & test reports
+├── docs/                            # Project specifications, methodology, contracts & release audits
 │   ├── PRD.md
 │   ├── ARCHITECTURE.md
 │   ├── API_CONTRACT.md
@@ -68,6 +68,12 @@ Rather than flattening distinct satellite sensors into an unvalidated single num
 │   ├── NASA_DATA_SOURCES.md
 │   ├── TESTING.md
 │   ├── WHITEBOX_TESTING_REPORT.md
+│   ├── RELEASE_READINESS.md
+│   ├── FINAL_QA_REPORT.md
+│   ├── SECURITY_AUDIT.md
+│   ├── SCIENTIFIC_DATA_AUDIT.md
+│   ├── DEPLOYMENT.md
+│   ├── RELEASE_NOTES.md
 │   ├── DESIGN.md
 │   ├── DECISIONS.md
 │   ├── BUILD_PROMPT.md
@@ -242,6 +248,12 @@ Full parameter and response schemas are documented in [`docs/API_CONTRACT.md`](.
 - [`docs/NASA_DATA_SOURCES.md`](./docs/NASA_DATA_SOURCES.md) — Verified NASA FIRMS, Earthdata, and user guide bibliography.
 - [`docs/TESTING.md`](./docs/TESTING.md) — Scientific verification strategy and test invariants.
 - [`docs/WHITEBOX_TESTING_REPORT.md`](./docs/WHITEBOX_TESTING_REPORT.md) — Full white-box audit, HTTP contract verification, and browser check report.
+- [`docs/RELEASE_READINESS.md`](./docs/RELEASE_READINESS.md) — `v1.0.0-rc1` → `v1.0.0` release audit, dependency license inventory, and Go/No-Go gates.
+- [`docs/FINAL_QA_REPORT.md`](./docs/FINAL_QA_REPORT.md) — Multi-viewport (`1440×900`, `768×1024`, `390×844`), accessibility, concurrency, and failure-recovery QA report.
+- [`docs/SECURITY_AUDIT.md`](./docs/SECURITY_AUDIT.md) — Secret isolation, HTTP security headers, injection boundary tests, and payload sanitization audit.
+- [`docs/SCIENTIFIC_DATA_AUDIT.md`](./docs/SCIENTIFIC_DATA_AUDIT.md) — Immutable NASA archive SHA-256 verification and scientific guardrail compliance audit.
+- [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) — Production deployment, `systemd`/Nginx setup, backup/restore, and rollback runbook.
+- [`docs/RELEASE_NOTES.md`](./docs/RELEASE_NOTES.md) — Production `v1.0.0` release notes and scientific scope boundaries.
 - [`docs/DESIGN.md`](./docs/DESIGN.md) — Visual and UX design system specifications.
 - [`docs/DECISIONS.md`](./docs/DECISIONS.md) — Architectural and scientific decision log.
 - [`docs/PROJECT_GRAPH.md`](./docs/PROJECT_GRAPH.md) — Knowledge graph and data-lineage specification.

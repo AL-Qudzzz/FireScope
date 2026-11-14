@@ -24,6 +24,37 @@ let cachedManifest: ParquetArchiveManifest | null | undefined;
 let duckdbInstance: DuckDBInstance | null = null;
 let duckdbConnPromise: Promise<DuckDBConnection> | null = null;
 
+const MAX_PARQUET_CACHE_ENTRIES = 128;
+const parquetQueryCache = new Map<string, unknown>();
+const inFlightParquetQueries = new Map<string, Promise<unknown>>();
+
+async function withParquetCache<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  if (parquetQueryCache.has(key)) {
+    return parquetQueryCache.get(key) as T;
+  }
+  const existing = inFlightParquetQueries.get(key);
+  if (existing) {
+    return existing as Promise<T>;
+  }
+  const p = (async () => {
+    try {
+      const result = await fn();
+      if (parquetQueryCache.size >= MAX_PARQUET_CACHE_ENTRIES) {
+        const oldestKey = parquetQueryCache.keys().next().value;
+        if (oldestKey !== undefined) {
+          parquetQueryCache.delete(oldestKey);
+        }
+      }
+      parquetQueryCache.set(key, result);
+      return result;
+    } finally {
+      inFlightParquetQueries.delete(key);
+    }
+  })();
+  inFlightParquetQueries.set(key, p);
+  return p;
+}
+
 function sqlStr(val: string): string {
   return `'${val.replace(/'/g, "''")}'`;
 }
@@ -193,42 +224,56 @@ export async function queryParquetDailyBuckets(params: {
   const manifest = getParquetManifest();
   if (!manifest?.available) return [];
 
-  const conn = await getDuckDbConn();
-  const whereSql = buildFilterWhereClause({ ...params, useCellBins: true });
+  const cacheKey = `daily:${JSON.stringify({
+    b: params.bbox,
+    s: params.startDate,
+    e: params.endDate,
+    sn: params.sensor,
+    p: [...params.platforms].sort(),
+    ps: params.processingStatus,
+    dn: params.dayNight,
+    mc: params.modisMinConfidence,
+    vc: [...params.viirsCategories].sort(),
+  })}`;
 
-  const sql = `
-    SELECT
-      acq_date,
-      sensor,
-      platform,
-      processing_status,
-      daynight_native,
-      confidence_bucket,
-      SUM(detection_count)::INTEGER AS detection_count,
-      SUM(frp_sum_mw)::DOUBLE AS frp_sum_mw,
-      SUM(frp_valid_count)::INTEGER AS frp_valid_count,
-      SUM(frp_null_count)::INTEGER AS frp_null_count,
-      MAX(frp_max_mw)::DOUBLE AS frp_max_mw
-    FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
-    WHERE ${whereSql}
-    GROUP BY acq_date, sensor, platform, processing_status, daynight_native, confidence_bucket
-    ORDER BY acq_date ASC;
-  `;
+  return withParquetCache(cacheKey, async () => {
+    const conn = await getDuckDbConn();
+    const whereSql = buildFilterWhereClause({ ...params, useCellBins: true });
 
-  const res = await conn.runAndReadAll(sql);
-  return res.getRowObjects().map((r) => ({
-    acq_date: String(r.acq_date),
-    sensor: String(r.sensor) as SensorId,
-    platform: String(r.platform) as PlatformId,
-    processing_status: String(r.processing_status) as ProcessingStatus,
-    daynight_native: String(r.daynight_native) as 'D' | 'N' | 'U',
-    confidence_bucket: String(r.confidence_bucket),
-    detection_count: Number(r.detection_count ?? 0),
-    frp_sum_mw: Number(r.frp_sum_mw ?? 0),
-    frp_valid_count: Number(r.frp_valid_count ?? 0),
-    frp_null_count: Number(r.frp_null_count ?? 0),
-    frp_max_mw: r.frp_max_mw !== null && r.frp_max_mw !== undefined ? Number(r.frp_max_mw) : null,
-  }));
+    const sql = `
+      SELECT
+        acq_date,
+        sensor,
+        platform,
+        processing_status,
+        daynight_native,
+        confidence_bucket,
+        SUM(detection_count)::INTEGER AS detection_count,
+        SUM(frp_sum_mw)::DOUBLE AS frp_sum_mw,
+        SUM(frp_valid_count)::INTEGER AS frp_valid_count,
+        SUM(frp_null_count)::INTEGER AS frp_null_count,
+        MAX(frp_max_mw)::DOUBLE AS frp_max_mw
+      FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
+      WHERE ${whereSql}
+      GROUP BY acq_date, sensor, platform, processing_status, daynight_native, confidence_bucket
+      ORDER BY acq_date ASC;
+    `;
+
+    const res = await conn.runAndReadAll(sql);
+    return res.getRowObjects().map((r) => ({
+      acq_date: String(r.acq_date),
+      sensor: String(r.sensor) as SensorId,
+      platform: String(r.platform) as PlatformId,
+      processing_status: String(r.processing_status) as ProcessingStatus,
+      daynight_native: String(r.daynight_native) as 'D' | 'N' | 'U',
+      confidence_bucket: String(r.confidence_bucket),
+      detection_count: Number(r.detection_count ?? 0),
+      frp_sum_mw: Number(r.frp_sum_mw ?? 0),
+      frp_valid_count: Number(r.frp_valid_count ?? 0),
+      frp_null_count: Number(r.frp_null_count ?? 0),
+      frp_max_mw: r.frp_max_mw !== null && r.frp_max_mw !== undefined ? Number(r.frp_max_mw) : null,
+    }));
+  });
 }
 
 /**
@@ -255,37 +300,49 @@ export async function queryParquetHistoricalMonthlyTotals(params: {
   const manifest = getParquetManifest();
   if (!manifest?.available) return [];
 
-  const conn = await getDuckDbConn();
-  const whereSql = buildFilterWhereClause({
-    ...params,
-    startDate: manifest.date_range.min_date,
-    endDate: manifest.date_range.max_date,
-    useCellBins: true,
+  const cacheKey = `histMonthly:${JSON.stringify({
+    b: params.bbox,
+    sn: params.sensor,
+    p: [...params.platforms].sort(),
+    ps: params.processingStatus,
+    dn: params.dayNight,
+    mc: params.modisMinConfidence,
+    vc: [...params.viirsCategories].sort(),
+  })}`;
+
+  return withParquetCache(cacheKey, async () => {
+    const conn = await getDuckDbConn();
+    const whereSql = buildFilterWhereClause({
+      ...params,
+      startDate: manifest.date_range.min_date,
+      endDate: manifest.date_range.max_date,
+      useCellBins: true,
+    });
+
+    const sql = `
+      SELECT
+        CAST(SUBSTR(acq_date, 1, 4) AS INTEGER) AS yr,
+        SUBSTR(acq_date, 6, 2) AS mo,
+        SUM(CASE WHEN sensor = 'MODIS' THEN detection_count ELSE 0 END)::INTEGER AS modis_count,
+        SUM(CASE WHEN sensor = 'VIIRS' THEN detection_count ELSE 0 END)::INTEGER AS viirs_count,
+        SUM(CASE WHEN sensor = 'MODIS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS modis_frp_sum,
+        SUM(CASE WHEN sensor = 'VIIRS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS viirs_frp_sum
+      FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
+      WHERE ${whereSql}
+      GROUP BY yr, mo
+      ORDER BY yr ASC, mo ASC;
+    `;
+
+    const res = await conn.runAndReadAll(sql);
+    return res.getRowObjects().map((r) => ({
+      year: Number(r.yr),
+      month: String(r.mo),
+      modis_count: Number(r.modis_count ?? 0),
+      viirs_count: Number(r.viirs_count ?? 0),
+      modis_frp_sum: Number(r.modis_frp_sum ?? 0),
+      viirs_frp_sum: Number(r.viirs_frp_sum ?? 0),
+    }));
   });
-
-  const sql = `
-    SELECT
-      CAST(SUBSTR(acq_date, 1, 4) AS INTEGER) AS yr,
-      SUBSTR(acq_date, 6, 2) AS mo,
-      SUM(CASE WHEN sensor = 'MODIS' THEN detection_count ELSE 0 END)::INTEGER AS modis_count,
-      SUM(CASE WHEN sensor = 'VIIRS' THEN detection_count ELSE 0 END)::INTEGER AS viirs_count,
-      SUM(CASE WHEN sensor = 'MODIS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS modis_frp_sum,
-      SUM(CASE WHEN sensor = 'VIIRS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS viirs_frp_sum
-    FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
-    WHERE ${whereSql}
-    GROUP BY yr, mo
-    ORDER BY yr ASC, mo ASC;
-  `;
-
-  const res = await conn.runAndReadAll(sql);
-  return res.getRowObjects().map((r) => ({
-    year: Number(r.yr),
-    month: String(r.mo),
-    modis_count: Number(r.modis_count ?? 0),
-    viirs_count: Number(r.viirs_count ?? 0),
-    modis_frp_sum: Number(r.modis_frp_sum ?? 0),
-    viirs_frp_sum: Number(r.viirs_frp_sum ?? 0),
-  }));
 }
 
 /**
@@ -311,51 +368,66 @@ export async function queryParquetMapGrid(params: {
     : 0.5;
   const inv = 1 / cellSize;
 
-  const conn = await getDuckDbConn();
-  const whereSql = buildFilterWhereClause({ ...params, useCellBins: true });
+  const cacheKey = `grid:${JSON.stringify({
+    b: params.bbox,
+    cs: cellSize,
+    s: params.startDate,
+    e: params.endDate,
+    sn: params.sensor,
+    p: [...params.platforms].sort(),
+    ps: params.processingStatus,
+    dn: params.dayNight,
+    mc: params.modisMinConfidence,
+    vc: [...params.viirsCategories].sort(),
+  })}`;
 
-  const sql = `
-    SELECT
-      (FLOOR(lat_bin * ${inv}) / ${inv})::DOUBLE AS g_lat,
-      (FLOOR(lng_bin * ${inv}) / ${inv})::DOUBLE AS g_lng,
-      SUM(CASE WHEN sensor = 'MODIS' THEN detection_count ELSE 0 END)::INTEGER AS modis_detections,
-      SUM(CASE WHEN sensor = 'VIIRS' THEN detection_count ELSE 0 END)::INTEGER AS viirs_detections,
-      SUM(CASE WHEN sensor = 'MODIS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS modis_frp_sum_mw,
-      SUM(CASE WHEN sensor = 'VIIRS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS viirs_frp_sum_mw,
-      STRING_AGG(DISTINCT platform, ',') AS platforms
-    FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
-    WHERE ${whereSql}
-    GROUP BY g_lat, g_lng
-    HAVING (SUM(detection_count)) > 0
-    ORDER BY SUM(detection_count) DESC
-    LIMIT 1800;
-  `;
+  return withParquetCache(cacheKey, async () => {
+    const conn = await getDuckDbConn();
+    const whereSql = buildFilterWhereClause({ ...params, useCellBins: true });
 
-  const res = await conn.runAndReadAll(sql);
-  return res.getRowObjects().map((r) => {
-    const latBin = Number(r.g_lat);
-    const lngBin = Number(r.g_lng);
-    const modis = Number(r.modis_detections ?? 0);
-    const viirs = Number(r.viirs_detections ?? 0);
-    const platforms = String(r.platforms ?? '')
-      .split(',')
-      .filter(Boolean) as PlatformId[];
+    const sql = `
+      SELECT
+        (FLOOR(lat_bin * ${inv}) / ${inv})::DOUBLE AS g_lat,
+        (FLOOR(lng_bin * ${inv}) / ${inv})::DOUBLE AS g_lng,
+        SUM(CASE WHEN sensor = 'MODIS' THEN detection_count ELSE 0 END)::INTEGER AS modis_detections,
+        SUM(CASE WHEN sensor = 'VIIRS' THEN detection_count ELSE 0 END)::INTEGER AS viirs_detections,
+        SUM(CASE WHEN sensor = 'MODIS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS modis_frp_sum_mw,
+        SUM(CASE WHEN sensor = 'VIIRS' THEN frp_sum_mw ELSE 0 END)::DOUBLE AS viirs_frp_sum_mw,
+        STRING_AGG(DISTINCT platform, ',') AS platforms
+      FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
+      WHERE ${whereSql}
+      GROUP BY g_lat, g_lng
+      HAVING (SUM(detection_count)) > 0
+      ORDER BY SUM(detection_count) DESC
+      LIMIT 1800;
+    `;
 
-    return {
-      cell_id: `${latBin}|${lngBin}`,
-      lat_bin: latBin,
-      lng_bin: lngBin,
-      cell_size_deg: cellSize,
-      centroid_lat: Number((latBin + cellSize / 2).toFixed(4)),
-      centroid_lng: Number((lngBin + cellSize / 2).toFixed(4)),
-      modis_detections: modis,
-      viirs_detections: viirs,
-      pooled_observation_count: modis + viirs,
-      modis_frp_sum_mw: Number(Number(r.modis_frp_sum_mw ?? 0).toFixed(2)),
-      viirs_frp_sum_mw: Number(Number(r.viirs_frp_sum_mw ?? 0).toFixed(2)),
-      platforms,
-      source_backing: 'PARQUET' as const,
-    };
+    const res = await conn.runAndReadAll(sql);
+    return res.getRowObjects().map((r) => {
+      const latBin = Number(r.g_lat);
+      const lngBin = Number(r.g_lng);
+      const modis = Number(r.modis_detections ?? 0);
+      const viirs = Number(r.viirs_detections ?? 0);
+      const platforms = String(r.platforms ?? '')
+        .split(',')
+        .filter(Boolean) as PlatformId[];
+
+      return {
+        cell_id: `${latBin}|${lngBin}`,
+        lat_bin: latBin,
+        lng_bin: lngBin,
+        cell_size_deg: cellSize,
+        centroid_lat: Number((latBin + cellSize / 2).toFixed(4)),
+        centroid_lng: Number((lngBin + cellSize / 2).toFixed(4)),
+        modis_detections: modis,
+        viirs_detections: viirs,
+        pooled_observation_count: modis + viirs,
+        modis_frp_sum_mw: Number(Number(r.modis_frp_sum_mw ?? 0).toFixed(2)),
+        viirs_frp_sum_mw: Number(Number(r.viirs_frp_sum_mw ?? 0).toFixed(2)),
+        platforms,
+        source_backing: 'PARQUET' as const,
+      };
+    });
   });
 }
 
