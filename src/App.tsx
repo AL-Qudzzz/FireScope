@@ -1,32 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React from 'react';
 import {
-  AlertTriangle,
-  Calendar,
   Check,
   ChevronDown,
   ChevronUp,
-  Compass,
   Download,
-  ExternalLink,
   HelpCircle,
-  Info,
-  Layers,
   Map as MapIcon,
-  Share2,
   SlidersHorizontal,
   X,
 } from 'lucide-react';
-import { AppRoute, GlobalHeader } from './components/GlobalHeader';
+import { GlobalHeader } from './components/GlobalHeader';
 import { PrimaryNavigationDrawer } from './components/PrimaryNavigationDrawer';
-import {
-  ActiveMapInteractionMode,
-  BasemapStyle,
-  MapCanvas,
-  MapOverlaySettings,
-} from './components/MapCanvas';
+import { MapCanvas } from './components/MapCanvas';
 import {
   AoiSearchPanel,
-  DockToolId,
   LayerDrawer,
   MapToolDock,
   MeasurementPanel,
@@ -45,671 +32,90 @@ import {
   DataSourcesView,
   MethodologyView,
 } from './components/ReferencePages';
-import {
-  computeCalendarFromState,
-  fetchBoundedObservationsFromApi,
-  fetchCalendarAnalyticsFromApi,
-  fetchDataStatusFromApi,
-  fetchLiveEonetForClient,
-  fetchMapGridFromApi,
-  fetchMapHotspotsFromApi,
-  generateProvenanceCsv,
-  getActiveAoi,
-  getLocalDataStatus,
-  queryBoundedObservations,
-} from './services/firescopeApi';
-import { PRESET_AOIS } from './data/firmsArchiveData';
-import {
-  AoiDefinition,
-  AutoRefreshIntervalMs,
-  BoundingBox,
-  CalendarAnalyticsResponse,
-  CanonicalObservation,
-  DataStatusResponse,
-  GeoPoint,
-  Granularity,
-  MapDisplayMode,
-  MapGridResponse,
-  PlatformId,
-  SavedAoiRecord,
-  SensorFilter,
-  SharedQueryState,
-} from './types/firescope';
-import { calculateGeometryMeasurement } from './science/fireScience';
-import {
-  deleteSavedAoi,
-  loadSavedAois,
-  renameSavedAoi,
-  saveAoiRecord,
-} from './utils/savedAois';
+import { InfoPopover } from './components/ProgressiveDisclosure';
+import { useFireScopeWorkspace } from './hooks/useFireScopeWorkspace';
 
 export default function App() {
-  // Parse initial URL search params if provided for reproducible shared links
-  const initialUrlParams = useMemo(() => new URLSearchParams(window.location.search), []);
-
-  const [activeRoute, setActiveRoute] = useState<AppRoute>(() => {
-    const viewParam = initialUrlParams.get('view');
-    if (
-      viewParam === 'analysis' ||
-      viewParam === 'data-sources' ||
-      viewParam === 'methodology' ||
-      viewParam === 'about'
-    ) {
-      return viewParam;
-    }
-    return 'map';
-  });
-
-  const [isDark, setIsDark] = useState<boolean>(true);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (isDark) {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-  }, [isDark]);
-
-  const [queryState, setQueryState] = useState<SharedQueryState>(() => ({
-    aoiId: initialUrlParams.get('aoi') || 'global-world',
-    customAoi: null,
-    startDate: initialUrlParams.get('start') || '2026-11-12',
-    endDate: initialUrlParams.get('end') || '2026-11-13',
-    granularity: (initialUrlParams.get('granularity') as Granularity) || 'day',
-    sensor: (initialUrlParams.get('sensor') as SensorFilter) || 'ALL',
-    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
-    processingStatus: 'ALL',
-    dayNight: 'ALL',
-    modisMinConfidence: 0,
-    viirsCategories: ['low', 'nominal', 'high'],
-    excludeOffshore: true,
-    calendarMetric: 'detection_count',
-    controlDensity: 'overview',
-    selectedBinKey: null,
-    selectedObservationId: null,
-  }));
-
-  const updateQueryState = (patch: Partial<SharedQueryState>) => {
-    setQueryState((prev) => ({ ...prev, ...patch }));
-  };
-
-  const activeAoi = useMemo(() => getActiveAoi(queryState), [queryState]);
-
-  const [dataStatus, setDataStatus] = useState<DataStatusResponse>(() =>
-    getLocalDataStatus()
-  );
-  const [liveEonetRecords, setLiveEonetRecords] = useState<CanonicalObservation[]>([]);
-
-  const [mapViewport, setMapViewport] = useState<{
-    west: number;
-    south: number;
-    east: number;
-    north: number;
-    zoom: number;
-  }>({
-    west: -180,
-    south: -85,
-    east: 180,
-    north: 85,
-    zoom: 2,
-  });
-
-  // Sync mapViewport immediately whenever activeAoi changes (critical when switching AOI in AOI Analysis)
-  const activeAoiViewportKey = `${activeAoi.id}:${activeAoi.bbox.west},${activeAoi.bbox.south},${activeAoi.bbox.east},${activeAoi.bbox.north}`;
-  useEffect(() => {
-    if (activeAoi.id === 'global-world') {
-      setMapViewport({
-        west: -180,
-        south: -85,
-        east: 180,
-        north: 85,
-        zoom: 2,
-      });
-    } else {
-      setMapViewport({
-        west: activeAoi.bbox.west,
-        south: activeAoi.bbox.south,
-        east: activeAoi.bbox.east,
-        north: activeAoi.bbox.north,
-        zoom: 6,
-      });
-    }
-  }, [activeAoi.id, activeAoiViewportKey]);
-
-  const [mapObservations, setMapObservations] = useState<CanonicalObservation[]>([]);
-  const [hotspotsMeta, setHotspotsMeta] = useState<{
-    totalInViewport: number;
-    totalGlobal: number;
-    excludedOffshoreCount: number;
-    sampled: boolean;
-    isLoading: boolean;
-  }>({
-    totalInViewport: 0,
-    totalGlobal: 0,
-    excludedOffshoreCount: 0,
-    sampled: false,
-    isLoading: true,
-  });
-
-  // P1 Map Spatial Display Mode & P2 Auto-Refresh / Saved AOIs
-  const [mapDisplayMode, setMapDisplayMode] = useState<MapDisplayMode>('points');
-  const [gridResolutionDeg, setGridResolutionDeg] = useState<0.25 | 0.5 | 1.0 | 2.0>(0.5);
-  const [gridData, setGridData] = useState<MapGridResponse | null>(null);
-  const [savedAois, setSavedAois] = useState<SavedAoiRecord[]>(() => loadSavedAois());
-  const [autoRefreshMs, setAutoRefreshMs] = useState<AutoRefreshIntervalMs>(600000);
-  const [refreshNonce, setRefreshNonce] = useState<number>(0);
-  const [analysisSubTab, setAnalysisSubTab] = useState<'calendar' | 'period-compare' | 'aoi-compare'>('calendar');
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    fetchDataStatusFromApi()
-      .then((status) => {
-        if (isCancelled) return;
-        setDataStatus(status);
-        if (
-          refreshNonce === 0 &&
-          status.live_firms_connected &&
-          status.live_firms_min_date &&
-          status.live_firms_max_date &&
-          !initialUrlParams.get('start') &&
-          !initialUrlParams.get('end')
-        ) {
-          setQueryState((prev) => ({
-            ...prev,
-            startDate: status.live_firms_min_date!,
-            endDate: status.live_firms_max_date!,
-          }));
-        }
-      })
-      .catch(() => {});
-
-    fetchLiveEonetForClient()
-      .then((res) => {
-        if (isCancelled) return;
-        if (res.connected && res.items.length > 0) {
-          setLiveEonetRecords(res.items);
-          setDataStatus((prev) => ({
-            ...prev,
-            live_eonet_connected: true,
-            live_eonet_event_count: res.items.length,
-            live_eonet_synced_at_utc: res.syncedAtUtc,
-          }));
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [initialUrlParams, refreshNonce]);
-
-  // P2 Periodic Frontend Auto-Refresh Timer (respects user-selected Off / 5m / 10m interval)
-  useEffect(() => {
-    if (autoRefreshMs === 0) return;
-    const id = setInterval(() => {
-      setRefreshNonce((n) => n + 1);
-    }, autoRefreshMs);
-    return () => clearInterval(id);
-  }, [autoRefreshMs]);
-
-  // Fetch viewport-bounded NASA FIRMS points (or P1 spatial grid/cluster aggregation) on pan/zoom/filter/refresh
-  useEffect(() => {
-    const controller = new AbortController();
-    setHotspotsMeta((prev) => ({ ...prev, isLoading: true }));
-
-    const timer = setTimeout(() => {
-      if (mapDisplayMode === 'grid' || mapDisplayMode === 'cluster') {
-        fetchMapGridFromApi({
-          state: queryState,
-          bounds: mapViewport,
-          mode: mapDisplayMode,
-          resolutionDeg: gridResolutionDeg,
-          signal: controller.signal,
-        })
-          .then((res) => {
-            if (!res) {
-              setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
-              return;
-            }
-            setGridData(res);
-            setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
-          })
-          .catch(() => {
-            if (!controller.signal.aborted) {
-              setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
-            }
-          });
-        return;
-      }
-
-      fetchMapHotspotsFromApi({
-        state: queryState,
-        bounds: mapViewport,
-        zoom: mapViewport.zoom,
-        signal: controller.signal,
-      })
-        .then((res) => {
-          if (!res) {
-            setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
-            return;
-          }
-          setMapObservations(res.items);
-          setHotspotsMeta({
-            totalInViewport: res.total_in_viewport,
-            totalGlobal: res.total_global_24h,
-            excludedOffshoreCount: res.excluded_offshore_count ?? 0,
-            sampled: res.sampled,
-            isLoading: false,
-          });
-          if (res.total_global_24h > 0) {
-            setDataStatus((prev) => ({
-              ...prev,
-              data_mode: res.data_mode,
-              live_firms_connected: true,
-              live_firms_count: res.total_global_24h,
-              live_firms_synced_at_utc: res.synced_at_utc,
-              live_firms_min_date: res.min_date,
-              live_firms_max_date: res.max_date,
-              latest_acquisition_utc: res.latest_acquisition_utc,
-              retrieved_at_utc: res.synced_at_utc,
-            }));
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) {
-            setHotspotsMeta((prev) => ({ ...prev, isLoading: false }));
-          }
-        });
-    }, 100);
-
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [
-    mapViewport,
+  const {
+    PRESET_AOIS,
+    activeRoute,
+    setActiveRoute,
+    isDark,
+    setIsDark,
+    queryState,
+    updateQueryState,
+    activeAoi,
+    dataStatus,
+    mapObservations,
+    hotspotsMeta,
+    setMapViewport,
     mapDisplayMode,
+    setMapDisplayMode,
     gridResolutionDeg,
-    refreshNonce,
-    queryState.aoiId,
-    queryState.customAoi,
-    queryState.startDate,
-    queryState.endDate,
-    queryState.sensor,
-    queryState.platforms,
-    queryState.processingStatus,
-    queryState.dayNight,
-    queryState.modisMinConfidence,
-    queryState.viirsCategories,
-    queryState.excludeOffshore,
-  ]);
-
-  // Navigation & Tool Drawer states
-  const [isNavDrawerOpen, setIsNavDrawerOpen] = useState(false);
-  const [activeDockTool, setActiveDockTool] = useState<DockToolId>(null);
-  const [isLayersOpen, setIsLayersOpen] = useState(false);
-  const [isTimelineOpen, setIsTimelineOpen] = useState(false);
-  const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
-  const [isCaptureModalOpen, setIsCaptureModalOpen] = useState(false);
-  const [isContextStripExpanded, setIsContextStripExpanded] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Map appearance & interaction states
-  const [basemap, setBasemap] = useState<BasemapStyle>('satellite');
-  const [overlays, setOverlays] = useState<MapOverlaySettings>({
-    adminBoundaries: true,
-    graticuleGrid: true,
-    coastlines: true,
-    pixelFootprints: false,
-    terrainHillshade: false,
-    solarTerminator: false,
-  });
-  const [interactionMode, setInteractionMode] =
-    useState<ActiveMapInteractionMode>('pan');
-  const [measurePoints, setMeasurePoints] = useState<GeoPoint[]>([]);
-  const [measureUnitSystem, setMeasureUnitSystem] = useState<'metric' | 'imperial'>(
-    'metric'
-  );
-
-  // Escape key handler to close topmost drawer/modal or cancel drawing (Section 5.6 & 11.3)
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (isHelpModalOpen) {
-          setIsHelpModalOpen(false);
-        } else if (isCaptureModalOpen) {
-          setIsCaptureModalOpen(false);
-        } else if (queryState.selectedObservationId) {
-          updateQueryState({ selectedObservationId: null });
-        } else if (interactionMode !== 'pan') {
-          setInteractionMode('pan');
-        } else if (activeDockTool) {
-          setActiveDockTool(null);
-        } else if (isTimelineOpen) {
-          setIsTimelineOpen(false);
-        } else if (isLayersOpen) {
-          setIsLayersOpen(false);
-        } else if (isNavDrawerOpen) {
-          setIsNavDrawerOpen(false);
-        } else if (isContextStripExpanded) {
-          setIsContextStripExpanded(false);
-        }
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    isHelpModalOpen,
-    isCaptureModalOpen,
-    queryState.selectedObservationId,
-    interactionMode,
-    activeDockTool,
-    isTimelineOpen,
-    isLayersOpen,
+    setGridResolutionDeg,
+    gridData,
+    savedAois,
+    autoRefreshMs,
+    setAutoRefreshMs,
+    analysisSubTab,
+    setAnalysisSubTab,
     isNavDrawerOpen,
+    setIsNavDrawerOpen,
+    activeDockTool,
+    setActiveDockTool,
+    isLayersOpen,
+    setIsLayersOpen,
+    isTimelineOpen,
+    setIsTimelineOpen,
+    isHelpModalOpen,
+    setIsHelpModalOpen,
+    isCaptureModalOpen,
+    setIsCaptureModalOpen,
     isContextStripExpanded,
-  ]);
+    setIsContextStripExpanded,
+    toastMessage,
+    basemap,
+    setBasemap,
+    overlays,
+    setOverlays,
+    interactionMode,
+    setInteractionMode,
+    measurePoints,
+    setMeasurePoints,
+    measureUnitSystem,
+    setMeasureUnitSystem,
+    liveMinDate,
+    liveMaxDate,
+    liveWindowMode,
+    handleSelectLiveWindow,
+    calendarAnalytics,
+    isCalendarLoading,
+    calendarError,
+    retryCalendar,
+    selectedBin,
+    selectedBinObservations,
+    selectedBinTotalMatching,
+    isBinObservationsLoading,
+    selectedObservation,
+    showToast,
+    handleSelectPresetAoi,
+    handleSaveCurrentAoi,
+    handleRenameSavedAoi,
+    handleDeleteSavedAoi,
+    handleApplyCustomAoi,
+    handleFinishDrawBbox,
+    handleFinishDrawPolygon,
+    handleShareView,
+    handleDownloadCsv,
+    triggerManualRefresh,
+  } = useFireScopeWorkspace();
 
-  // Active AOI is derived near queryState above so viewport sync stays consistent.
-
-  const liveMinDate = dataStatus.live_firms_min_date ?? '2026-11-12';
-  const liveMaxDate = dataStatus.live_firms_max_date ?? '2026-11-13';
-  const liveWindowMode: 'today' | '24h' | 'archive' =
-    queryState.startDate === liveMaxDate && queryState.endDate === liveMaxDate
-      ? 'today'
-      : queryState.startDate === liveMinDate && queryState.endDate === liveMaxDate
-      ? '24h'
-      : 'archive';
-
-  const handleSelectLiveWindow = (mode: 'today' | '24h') => {
-    updateQueryState({
-      startDate: mode === 'today' ? liveMaxDate : liveMinDate,
-      endDate: liveMaxDate,
-      granularity: 'day',
-      selectedBinKey: null,
-    });
-  };
-
-  const localCalendarAnalytics = useMemo(
-    () => computeCalendarFromState(queryState, liveEonetRecords),
-    [queryState, liveEonetRecords]
-  );
-  const [serverCalendarAnalytics, setServerCalendarAnalytics] =
-    useState<CalendarAnalyticsResponse | null>(null);
-  const [calendarError, setCalendarError] = useState<string | null>(null);
-  const [calendarRetryNonce, setCalendarRetryNonce] = useState<number>(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchCalendarAnalyticsFromApi(queryState, controller.signal)
-      .then((res) => {
-        if (!controller.signal.aborted && res) {
-          setServerCalendarAnalytics(res);
-          setCalendarError(null);
-        }
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted) {
-          setServerCalendarAnalytics(null);
-          setCalendarError(
-            err instanceof Error
-              ? err.message
-              : 'Failed to load calendar analytics from server.'
-          );
-        }
-      });
-    return () => controller.abort();
-  }, [
-    queryState.aoiId,
-    queryState.customAoi,
-    queryState.startDate,
-    queryState.endDate,
-    queryState.granularity,
-    queryState.sensor,
-    queryState.platforms,
-    queryState.processingStatus,
-    queryState.dayNight,
-    queryState.modisMinConfidence,
-    queryState.viirsCategories,
-    queryState.calendarMetric,
-    refreshNonce,
-    calendarRetryNonce,
-  ]);
-
-  const calendarAnalytics = serverCalendarAnalytics ?? localCalendarAnalytics;
-
-  const selectedBin = useMemo(() => {
-    if (calendarAnalytics.series.length === 0) return null;
-    if (queryState.selectedBinKey) {
-      const found = calendarAnalytics.series.find(
-        (b) => b.bin_key === queryState.selectedBinKey
-      );
-      if (found) return found;
-    }
-    // Default to latest active bin with records or last bin
-    const withRecords = [...calendarAnalytics.series]
-      .reverse()
-      .find((b) => (b.pooled_observation_count ?? 0) > 0);
-    return (
-      withRecords ?? calendarAnalytics.series[calendarAnalytics.series.length - 1]
-    );
-  }, [calendarAnalytics.series, queryState.selectedBinKey]);
-
-  const localSelectedBinResult = useMemo(() => {
-    if (!selectedBin) return { items: [] as CanonicalObservation[], total: 0 };
-    const res = queryBoundedObservations({
-      state: queryState,
-      liveEonetRecords,
-      startUtc: selectedBin.time_bin_start_utc,
-      endUtc: selectedBin.time_bin_end_utc,
-      limit: 150,
-    });
-    return { items: res.items, total: res.total_matching };
-  }, [queryState, liveEonetRecords, selectedBin]);
-
-  const [serverSelectedBinObservations, setServerSelectedBinObservations] =
-    useState<CanonicalObservation[] | null>(null);
-  const [serverSelectedBinTotal, setServerSelectedBinTotal] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!selectedBin) return;
-    const controller = new AbortController();
-    fetchBoundedObservationsFromApi({
-      state: queryState,
-      startUtc: selectedBin.time_bin_start_utc,
-      endUtc: selectedBin.time_bin_end_utc,
-      limit: 150,
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!controller.signal.aborted && res) {
-          setServerSelectedBinObservations(res.items);
-          setServerSelectedBinTotal(res.total_matching);
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setServerSelectedBinObservations(null);
-          setServerSelectedBinTotal(null);
-        }
-      });
-    return () => controller.abort();
-  }, [
-    queryState.aoiId,
-    queryState.customAoi,
-    queryState.sensor,
-    queryState.platforms,
-    queryState.processingStatus,
-    queryState.dayNight,
-    queryState.modisMinConfidence,
-    queryState.viirsCategories,
-    selectedBin?.bin_key,
-    refreshNonce,
-  ]);
-
-  const selectedBinObservations =
-    serverSelectedBinObservations ?? localSelectedBinResult.items;
-  const selectedBinTotalMatching =
-    serverSelectedBinTotal ?? localSelectedBinResult.total;
-
-  const selectedObservation = useMemo<CanonicalObservation | null>(() => {
-    if (!queryState.selectedObservationId) return null;
-    return (
-      mapObservations.find(
-        (o) => o.observation_id === queryState.selectedObservationId
-      ) ??
-      selectedBinObservations.find(
-        (o) => o.observation_id === queryState.selectedObservationId
-      ) ??
-      null
-    );
-  }, [queryState.selectedObservationId, mapObservations, selectedBinObservations]);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 4000);
-  };
-
-  const handleSelectPresetAoi = (aoiId: string) => {
-    const savedMatch = savedAois.find((s) => s.aoi.id === aoiId);
-    if (savedMatch) {
-      updateQueryState({
-        aoiId: savedMatch.aoi.id,
-        customAoi: savedMatch.aoi,
-        selectedBinKey: null,
-        selectedObservationId: null,
-      });
-      return;
-    }
-    updateQueryState({
-      aoiId,
-      customAoi: null,
-      selectedBinKey: null,
-      selectedObservationId: null,
-    });
-  };
-
-  const handleSaveCurrentAoi = (customLabel?: string) => {
-    const next = saveAoiRecord(activeAoi, customLabel);
-    setSavedAois(next);
-    const savedItem = next[0]?.aoi;
-    if (savedItem) {
-      updateQueryState({
-        aoiId: savedItem.id,
-        customAoi: savedItem,
-      });
-      showToast(`Saved AOI: ${savedItem.name}`);
-    }
-  };
-
-  const handleRenameSavedAoi = (aoiId: string, newName: string) => {
-    const next = renameSavedAoi(aoiId, newName);
-    setSavedAois(next);
-    const updated = next.find((s) => s.aoi.id === aoiId)?.aoi;
-    if (updated && queryState.aoiId === aoiId) {
-      updateQueryState({ customAoi: updated });
-    }
-    showToast('Renamed saved AOI.');
-  };
-
-  const handleDeleteSavedAoi = (aoiId: string) => {
-    const next = deleteSavedAoi(aoiId);
-    setSavedAois(next);
-    if (queryState.aoiId === aoiId) {
-      handleSelectPresetAoi('global-world');
-    }
-    showToast('Removed saved AOI.');
-  };
-
-  const handleApplyCustomAoi = (customAoi: AoiDefinition) => {
-    updateQueryState({
-      aoiId: customAoi.id,
-      customAoi,
-      selectedBinKey: null,
-      selectedObservationId: null,
-    });
-    setInteractionMode('pan');
-    showToast(`Applied Area of Interest: ${customAoi.name}`);
-  };
-
-  const handleFinishDrawBbox = (bbox: BoundingBox) => {
-    const geom = calculateGeometryMeasurement([
-      { lat: bbox.south, lng: bbox.west },
-      { lat: bbox.south, lng: bbox.east },
-      { lat: bbox.north, lng: bbox.east },
-      { lat: bbox.north, lng: bbox.west },
-    ]);
-    handleApplyCustomAoi({
-      id: 'custom-drawn-bbox',
-      name: `Drawn Bounding Box (${bbox.west.toFixed(2)}°, ${bbox.south.toFixed(2)}° to ${bbox.east.toFixed(2)}°, ${bbox.north.toFixed(2)}°)`,
-      regionLabel: 'User-Drawn Extent',
-      description: 'Interactive bounding box drawn on map canvas.',
-      geometryType: 'BBOX',
-      bbox,
-      timezone: 'UTC',
-      utcOffsetLabel: 'UTC+00:00',
-      areaSqKm: Math.max(10, Math.round(geom.areaSqKm)),
-      biome: 'Custom Drawn Sector',
-    });
-  };
-
-  const handleFinishDrawPolygon = (points: GeoPoint[], bbox: BoundingBox) => {
-    const geom = calculateGeometryMeasurement(points);
-    handleApplyCustomAoi({
-      id: 'custom-drawn-polygon',
-      name: `Drawn Polygon (${points.length} vertices, ~${Math.round(geom.areaSqKm).toLocaleString()} km²)`,
-      regionLabel: 'User-Drawn Polygon',
-      description: 'Interactive polygon geometry drawn on map canvas.',
-      geometryType: 'POLYGON',
-      bbox,
-      polygon: points,
-      timezone: 'UTC',
-      utcOffsetLabel: 'UTC+00:00',
-      areaSqKm: Math.max(10, Math.round(geom.areaSqKm)),
-      biome: 'Custom Polygon Sector',
-    });
-  };
-
-  const handleShareView = () => {
-    const params = new URLSearchParams();
-    params.set('view', activeRoute);
-    params.set('aoi', queryState.aoiId);
-    params.set('start', queryState.startDate);
-    params.set('end', queryState.endDate);
-    params.set('granularity', queryState.granularity);
-    params.set('sensor', queryState.sensor);
-    const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
-    window.history.replaceState({}, '', shareUrl);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(shareUrl).catch(() => {});
-    }
-    showToast(
-      queryState.customAoi
-        ? 'Updated URL parameters (Note: custom drawn vertices stay in current session).'
-        : 'Copied reproducible view link (AOI, date window, granularity & sensor preserved).'
-    );
-  };
-
-  const handleDownloadCsv = () => {
-    const csvContent = generateProvenanceCsv(calendarAnalytics);
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `firescope-${activeAoi.id}-${queryState.startDate}-to-${queryState.endDate}-${queryState.granularity}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast('Exported CSV with metric definitions, units (MW), and SHA-256 provenance.');
-  };
+  const hasSnppArchiveGap =
+    queryState.platforms.includes('SNPP') && queryState.endDate > '2026-11-02';
 
   return (
     <div className="h-[100dvh] w-full max-w-full overflow-hidden flex flex-col bg-[var(--app-bg)] text-[var(--text-primary)]">
-      {/* 1. Global Application Header (Section 5.2) */}
+      {/* 1. Global Application Command Bar */}
       <GlobalHeader
         activeRoute={activeRoute}
         onNavigate={setActiveRoute}
@@ -736,44 +142,9 @@ export default function App() {
         onToggleTheme={() => setIsDark((prev) => !prev)}
       />
 
-      {/* 2. Slim Context & Provenance Strip (Section 5.3) */}
-      <div className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] shrink-0 z-20">
-        {/* Desktop & Tablet strip (>= 768px) */}
-        <div className="hidden md:flex h-8 px-3 md:px-4 items-center justify-between gap-3 text-[11px] overflow-x-auto no-scrollbar whitespace-nowrap">
-          <div className="flex items-center gap-2 text-[var(--text-secondary)]">
-            <span className="font-semibold text-[var(--text-primary)]">
-              AOI: {activeAoi.name}
-            </span>
-            <span aria-hidden="true">·</span>
-            <span className="font-mono">
-              UTC Window: {queryState.startDate} to {queryState.endDate} ({queryState.granularity})
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>
-              Sensors:{' '}
-              <strong className="font-mono text-[var(--text-primary)]">
-                {queryState.sensor === 'ALL' ? 'MODIS + VIIRS (Separate M2)' : queryState.sensor}
-              </strong>
-            </span>
-            {queryState.platforms.includes('SNPP') && queryState.endDate > '2026-11-02' && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="text-[var(--warning)] font-medium">
-                  Note: VIIRS S-NPP archive ends 2026-11-02
-                </span>
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 font-mono text-[var(--text-muted)] shrink-0">
-            <span>Latest acq: {dataStatus.latest_acquisition_utc.slice(0, 16).replace('T', ' ')}Z</span>
-            <span aria-hidden="true">·</span>
-            <span>Method: {calendarAnalytics.method.id}</span>
-          </div>
-        </div>
-
-        {/* Mobile compact bar + collapsible provenance details (< 768px) */}
-        <div className="md:hidden px-2.5 py-1 flex flex-col gap-1 text-[11px]">
+      {/* 2. Mobile Compact Context Strip (Map Explorer < 768px only; desktop uses the Command Bar) */}
+      {activeRoute === 'map' && (
+        <div className="md:hidden bg-[var(--surface-2)] border-b border-[var(--border-subtle)] shrink-0 z-20 px-2.5 py-1 flex flex-col gap-1 text-[11px]">
           <div className="flex items-center justify-between gap-2 min-w-0">
             <div className="flex items-center gap-1.5 min-w-0 truncate text-[var(--text-secondary)]">
               <span className="font-semibold text-[var(--text-primary)] truncate">
@@ -803,27 +174,39 @@ export default function App() {
           {isContextStripExpanded && (
             <div className="pt-1.5 pb-1 border-t border-[var(--border-subtle)] grid grid-cols-1 gap-1 text-[10px] text-[var(--text-secondary)] font-mono">
               <div>
-                UTC Window: <strong className="text-[var(--text-primary)]">{queryState.startDate} to {queryState.endDate} ({queryState.granularity})</strong>
+                UTC Window:{' '}
+                <strong className="text-[var(--text-primary)]">
+                  {queryState.startDate} to {queryState.endDate} ({queryState.granularity})
+                </strong>
               </div>
               <div>
-                Sensors: <strong className="text-[var(--text-primary)]">{queryState.sensor === 'ALL' ? 'MODIS + VIIRS (Separate M2)' : queryState.sensor}</strong> · Method: <strong className="text-[var(--text-primary)]">{calendarAnalytics.method.id}</strong>
+                Sensors:{' '}
+                <strong className="text-[var(--text-primary)]">
+                  {queryState.sensor === 'ALL'
+                    ? 'MODIS + VIIRS (Side-by-Side)'
+                    : queryState.sensor}
+                </strong>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>Latest acq: {dataStatus.latest_acquisition_utc.slice(0, 16).replace('T', ' ')}Z</span>
-                {queryState.platforms.includes('SNPP') && queryState.endDate > '2026-11-02' && (
-                  <span className="text-[var(--warning)]">VIIRS S-NPP archive ends 2026-11-02</span>
+                <span>
+                  Latest acq: {dataStatus.latest_acquisition_utc.slice(0, 16).replace('T', ' ')}Z
+                </span>
+                {hasSnppArchiveGap && (
+                  <span className="text-[var(--warning)]">
+                    VIIRS S-NPP archive ends 2026-11-02
+                  </span>
                 )}
               </div>
             </div>
           )}
         </div>
-      </div>
+      )}
 
       {/* Toast Feedback Banner */}
       {toastMessage && (
         <div
           role="status"
-          className="fixed top-24 right-4 z-50 bg-[var(--surface-1)] border border-[var(--ember)] text-[var(--text-primary)] px-3.5 py-2 rounded-[6px] shadow-xl text-[12px] flex items-center gap-2 max-w-[calc(100vw-32px)]"
+          className="fixed top-20 right-4 z-50 bg-[var(--surface-1)] border border-[var(--border-strong)] text-[var(--text-primary)] px-3.5 py-2 rounded-md shadow-lg text-[12px] flex items-center gap-2 max-w-[calc(100vw-32px)]"
         >
           <Check className="w-4 h-4 text-[var(--success)] shrink-0" />
           <span>{toastMessage}</span>
@@ -860,7 +243,6 @@ export default function App() {
         {/* WORKSPACE 1: MAP EXPLORER (/map) */}
         {activeRoute === 'map' && (
           <div className="relative flex-1 h-full flex overflow-hidden min-w-0">
-            {/* Dominant Map Canvas */}
             <div className="relative flex-1 h-full min-w-0">
               <MapCanvas
                 activeAoi={activeAoi}
@@ -894,7 +276,6 @@ export default function App() {
                 }
               />
 
-              {/* Floating Left Task Panel (AOI Search/Coordinates/Draw or Measure) — Section 5.1 */}
               {activeDockTool === 'aoi' && (
                 <div className="absolute inset-x-2.5 bottom-[92px] sm:inset-x-auto sm:bottom-auto sm:top-3 sm:left-16 md:left-14 z-30">
                   <AoiSearchPanel
@@ -938,9 +319,7 @@ export default function App() {
                     interactionMode={interactionMode}
                     onSetInteractionMode={setInteractionMode}
                     measurePoints={measurePoints}
-                    onUndoPoint={() =>
-                      setMeasurePoints((prev) => prev.slice(0, -1))
-                    }
+                    onUndoPoint={() => setMeasurePoints((prev) => prev.slice(0, -1))}
                     onClearPoints={() => setMeasurePoints([])}
                     unitSystem={measureUnitSystem}
                     onChangeUnitSystem={setMeasureUnitSystem}
@@ -992,7 +371,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right-Side Layer Drawer (Section 6.3) */}
             <LayerDrawer
               isOpen={isLayersOpen}
               onClose={() => setIsLayersOpen(false)}
@@ -1000,9 +378,7 @@ export default function App() {
               queryState={queryState}
               onUpdateQueryState={updateQueryState}
               overlays={overlays}
-              onUpdateOverlays={(patch) =>
-                setOverlays((prev) => ({ ...prev, ...patch }))
-              }
+              onUpdateOverlays={(patch) => setOverlays((prev) => ({ ...prev, ...patch }))}
               basemap={basemap}
               onChangeBasemap={setBasemap}
               mapDisplayMode={mapDisplayMode}
@@ -1011,13 +387,9 @@ export default function App() {
               onChangeGridResolutionDeg={setGridResolutionDeg}
               autoRefreshMs={autoRefreshMs}
               onChangeAutoRefreshMs={setAutoRefreshMs}
-              onManualRefresh={() => {
-                setRefreshNonce((n) => n + 1);
-                showToast('Refreshing live NASA FIRMS streams...');
-              }}
+              onManualRefresh={triggerManualRefresh}
             />
 
-            {/* Right-Side Observation Inspector Drawer (Section 8) */}
             <ObservationInspector
               observation={selectedObservation}
               onClose={() => updateQueryState({ selectedObservationId: null })}
@@ -1025,309 +397,422 @@ export default function App() {
           </div>
         )}
 
-        {/* WORKSPACE 2: AOI ANALYSIS — CALENDAR-FIRST (/analysis/:aoiId) (Section 7) */}
+        {/* WORKSPACE 2: AOI ANALYSIS — SCIENTIFIC FIELD ATLAS (/analysis) */}
         {activeRoute === 'analysis' && (
           <div className="flex-1 h-full flex overflow-hidden">
-            <div className="flex-1 h-full overflow-y-auto p-4 md:p-6 space-y-5">
-              {/* 7.1 Page Hierarchy Row 1: AOI Title, Geometry Context & Shared Filter Toolbar */}
-              <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-[var(--border-subtle)]">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="text-[18px] md:text-[20px] font-semibold text-[var(--text-primary)]">
-                      {activeAoi.name}
-                    </h1>
-                    <span className="text-[12px] font-mono text-[var(--text-muted)]">
-                      · {activeAoi.geometryType} [{activeAoi.bbox.west.toFixed(2)}°,{' '}
-                      {activeAoi.bbox.south.toFixed(2)}° to {activeAoi.bbox.east.toFixed(2)}°,{' '}
-                      {activeAoi.bbox.north.toFixed(2)}°]
-                    </span>
-                  </div>
-                  <p className="text-[12px] text-[var(--text-secondary)] max-w-3xl">
-                    {activeAoi.description}
-                  </p>
-                </div>
+            <div className="flex-1 h-full overflow-y-auto p-4 md:p-6">
+              <div className="max-w-[1600px] mx-auto space-y-5">
+                {/* Consolidated Field Atlas Header Block */}
+                <section
+                  aria-label="AOI Analysis Header and Mode Navigation"
+                  className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md"
+                >
+                  <div className="px-4 py-3.5 md:px-5 md:py-4 flex flex-wrap items-start justify-between gap-4">
+                    <div className="space-y-1.5 min-w-0">
+                      <h1 className="text-[20px] md:text-[22px] font-semibold tracking-tight text-[var(--text-primary)]">
+                        {activeAoi.name}
+                      </h1>
+                      <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-secondary)]">
+                        <span>
+                          {activeAoi.regionLabel} · {activeAoi.areaSqKm.toLocaleString()} km²
+                        </span>
+                        <InfoPopover
+                          title="Region & Sensor Coverage Details"
+                          triggerLabel="Region details"
+                        >
+                          <div className="space-y-1.5">
+                            <p>{activeAoi.description}</p>
+                            <div className="pt-1.5 border-t border-[var(--border-subtle)] space-y-1 font-mono text-[10px]">
+                              <div>
+                                {activeAoi.geometryType} [{activeAoi.bbox.west.toFixed(2)}°,{' '}
+                                {activeAoi.bbox.south.toFixed(2)}° to{' '}
+                                {activeAoi.bbox.east.toFixed(2)}°,{' '}
+                                {activeAoi.bbox.north.toFixed(2)}°]
+                              </div>
+                              <div>
+                                Local timezone: {activeAoi.timezone} ({activeAoi.utcOffsetLabel})
+                              </div>
+                              <div>
+                                Latest acq:{' '}
+                                {dataStatus.latest_acquisition_utc.slice(0, 16).replace('T', ' ')}Z
+                              </div>
+                              {hasSnppArchiveGap && (
+                                <div className="text-[var(--warning)] font-medium pt-0.5">
+                                  Note: VIIRS S-NPP archive ends 2026-11-02
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </InfoPopover>
+                      </div>
+                    </div>
 
-                {/* Shared AOI Switcher, CSV Export & Map Return Controls */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    aria-label="Select Area of Interest"
-                    value={activeAoi.id}
-                    onChange={(e) => handleSelectPresetAoi(e.target.value)}
-                    className="h-8 px-2.5 rounded-[6px] bg-[var(--surface-1)] border border-[var(--border-subtle)] text-[12px] text-[var(--text-primary)]"
-                  >
-                    <optgroup label="Reference Preset AOIs">
-                      {PRESET_AOIS.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    {savedAois.length > 0 && (
-                      <optgroup label="Saved Personal AOIs">
-                        {savedAois.map((s) => (
-                          <option key={s.aoi.id} value={s.aoi.id}>
-                            ★ {s.aoi.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {queryState.customAoi &&
-                      !savedAois.some((s) => s.aoi.id === queryState.customAoi!.id) && (
-                        <option value={queryState.customAoi.id}>
-                          {queryState.customAoi.name}
-                        </option>
-                      )}
-                  </select>
+                    {/* Shared AOI Switcher, Export & Map Return Controls */}
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <select
+                        aria-label="Select Area of Interest"
+                        value={activeAoi.id}
+                        onChange={(e) => handleSelectPresetAoi(e.target.value)}
+                        className="h-8 px-2.5 rounded-md bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[12px] text-[var(--text-primary)]"
+                      >
+                        <optgroup label="Reference Preset AOIs">
+                          {PRESET_AOIS.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                        {savedAois.length > 0 && (
+                          <optgroup label="Saved Personal AOIs">
+                            {savedAois.map((s) => (
+                              <option key={s.aoi.id} value={s.aoi.id}>
+                                {s.aoi.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {queryState.customAoi &&
+                          !savedAois.some((s) => s.aoi.id === queryState.customAoi!.id) && (
+                            <option value={queryState.customAoi.id}>
+                              {queryState.customAoi.name}
+                            </option>
+                          )}
+                      </select>
 
-                  <button
-                    type="button"
-                    onClick={handleDownloadCsv}
-                    className="h-8 px-3 rounded-[6px] bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[12px] font-medium text-[var(--text-primary)] flex items-center gap-1.5"
-                  >
-                    <Download className="w-3.5 h-3.5 text-[var(--ember)]" />
-                    <span>Export CSV</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveRoute('map')}
-                    className="h-8 px-3 rounded-[6px] bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[12px] font-medium text-[var(--text-primary)] flex items-center gap-1.5"
-                  >
-                    <MapIcon className="w-3.5 h-3.5 text-[var(--viirs)]" />
-                    <span>Open in Map Explorer</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Analytical Mode Tabs */}
-              <div
-                role="tablist"
-                aria-label="AOI Analytical Views"
-                className="flex flex-wrap items-center gap-1 bg-[var(--surface-1)] p-1 rounded-[8px] border border-[var(--border-subtle)] w-fit"
-              >
-                {[
-                  { id: 'calendar' as const, label: 'Activity Calendar' },
-                  { id: 'period-compare' as const, label: 'Compare History' },
-                  { id: 'aoi-compare' as const, label: 'Compare Regions' },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={analysisSubTab === t.id}
-                    onClick={() => setAnalysisSubTab(t.id)}
-                    className={`px-3.5 py-1.5 rounded-[6px] text-[12px] font-medium transition-colors whitespace-nowrap ${
-                      analysisSubTab === t.id
-                        ? 'bg-[var(--ember)] text-white shadow-xs'
-                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)]'
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              {analysisSubTab === 'period-compare' && (
-                <PeriodComparisonPanel
-                  activeAoi={activeAoi}
-                  queryState={queryState}
-                  parquetAvailable={Boolean(dataStatus.parquet_archive?.available)}
-                  liveMaxDate={liveMaxDate}
-                  onSelectAoiId={handleSelectPresetAoi}
-                  onNotify={showToast}
-                />
-              )}
-
-              {analysisSubTab === 'aoi-compare' && (
-                <AoiComparisonPanel
-                  activeAoi={activeAoi}
-                  savedAois={savedAois}
-                  queryState={queryState}
-                  onNotify={showToast}
-                />
-              )}
-
-              {analysisSubTab === 'calendar' && (
-                <>
-                  {calendarError && (
-                    <div
-                      role="alert"
-                      className="px-4 py-2.5 rounded-[8px] bg-[var(--danger)]/10 border border-[var(--danger)]/35 text-[12px] text-[var(--danger)] flex flex-wrap items-center justify-between gap-2"
-                    >
-                      <span>Server calendar query error: {calendarError}</span>
                       <button
                         type="button"
-                        onClick={() => setCalendarRetryNonce((n) => n + 1)}
-                        className="px-2.5 py-1 rounded bg-[var(--surface-1)] border border-[var(--danger)]/40 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--surface-2)]"
+                        onClick={handleDownloadCsv}
+                        className="h-8 px-3 rounded-md bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[12px] font-medium text-[var(--text-primary)] flex items-center gap-1.5 transition-colors"
                       >
-                        Retry
+                        <Download className="w-3.5 h-3.5 text-[var(--ember)]" />
+                        <span>Export CSV</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveRoute('map')}
+                        className="h-8 px-3 rounded-md bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[12px] font-medium text-[var(--text-primary)] flex items-center gap-1.5 transition-colors"
+                      >
+                        <MapIcon className="w-3.5 h-3.5 text-[var(--viirs)]" />
+                        <span>Open in Map Explorer</span>
                       </button>
                     </div>
-                  )}
-                  {/* 7.2 Inline Activity Summary Strip (Vertical Dividers, No Generic KPI Cards!) */}
-                  <section
-                    aria-label="AOI Activity Summary Strip"
-                    className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] px-4 py-3 flex flex-wrap items-center justify-between gap-y-3 divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-subtle)]"
+                  </div>
+
+                  {/* Analytical Mode Hairline Tabs */}
+                  <div
+                    role="tablist"
+                    aria-label="AOI Analytical Views"
+                    className="px-4 md:px-5 border-t border-[var(--border-subtle)] bg-[var(--surface-2)]/50 rounded-b-md flex items-center gap-5 overflow-x-auto no-scrollbar"
                   >
-                    {/* Metric 1: MODIS Detections */}
-                    <div className="w-full sm:w-auto sm:pr-5 space-y-0.5">
-                      <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
-                        <span className="w-2.5 h-2.5 bg-[#FFB454] inline-block rounded-[1px]" />
-                        <span>MODIS Observed Detections</span>
-                      </div>
-                      <div className="text-[22px] font-mono font-semibold text-[#FFB454] tabular-nums">
-                        {calendarAnalytics.totals.MODIS_detections.toLocaleString()}
-                      </div>
-                      <div className="text-[11px] font-mono text-[var(--text-muted)]">
-                        Terra: {calendarAnalytics.totals.platform_totals.TERRA.toLocaleString()} · Aqua:{' '}
-                        {calendarAnalytics.totals.platform_totals.AQUA.toLocaleString()} · 1 km C6.1
-                      </div>
-                    </div>
+                    {[
+                      { id: 'calendar' as const, label: 'Activity Calendar' },
+                      { id: 'period-compare' as const, label: 'Historical Comparison' },
+                      { id: 'aoi-compare' as const, label: 'Regional Comparison' },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={analysisSubTab === t.id}
+                        onClick={() => setAnalysisSubTab(t.id)}
+                        className={`py-2.5 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
+                          analysisSubTab === t.id
+                            ? 'border-[var(--ember)] text-[var(--text-primary)] font-semibold'
+                            : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)]'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
 
-                    {/* Metric 2: VIIRS Detections */}
-                    <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:px-5 space-y-0.5">
-                      <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
-                        <span className="w-2.5 h-2.5 bg-[#61BDE0] inline-block rounded-full" />
-                        <span>VIIRS Observed Detections</span>
-                      </div>
-                      <div className="text-[22px] font-mono font-semibold text-[#61BDE0] tabular-nums">
-                        {calendarAnalytics.totals.VIIRS_detections.toLocaleString()}
-                      </div>
-                      <div className="text-[11px] font-mono text-[var(--text-muted)]">
-                        S-NPP: {calendarAnalytics.totals.platform_totals.SNPP.toLocaleString()} · N20:{' '}
-                        {calendarAnalytics.totals.platform_totals.NOAA20.toLocaleString()} · N21:{' '}
-                        {calendarAnalytics.totals.platform_totals.NOAA21.toLocaleString()}
-                      </div>
-                    </div>
+                {analysisSubTab === 'period-compare' && (
+                  <PeriodComparisonPanel
+                    activeAoi={activeAoi}
+                    queryState={queryState}
+                    parquetAvailable={Boolean(dataStatus.parquet_archive?.available)}
+                    liveMaxDate={liveMaxDate}
+                    onSelectAoiId={handleSelectPresetAoi}
+                    onNotify={showToast}
+                  />
+                )}
 
-                    {/* Metric 3: Observed FRP Summary (MW) */}
-                    <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:px-5 space-y-0.5">
-                      <div className="text-[12px] text-[var(--text-secondary)]">
-                        Observed FRP · MW (Mean / Valid Records)
-                      </div>
-                      <div className="text-[18px] font-mono font-semibold text-[var(--text-primary)] tabular-nums">
-                        M: {calendarAnalytics.totals.MODIS_frp.mean_mw ?? '—'} MW · V:{' '}
-                        {calendarAnalytics.totals.VIIRS_frp.mean_mw ?? '—'} MW
-                      </div>
-                      <div className="text-[11px] font-mono text-[var(--text-muted)]">
-                        Valid FRP records: MODIS ({calendarAnalytics.totals.MODIS_frp.valid_count.toLocaleString()}) ·
-                        VIIRS ({calendarAnalytics.totals.VIIRS_frp.valid_count.toLocaleString()})
-                      </div>
-                    </div>
+                {analysisSubTab === 'aoi-compare' && (
+                  <AoiComparisonPanel
+                    activeAoi={activeAoi}
+                    savedAois={savedAois}
+                    queryState={queryState}
+                    onNotify={showToast}
+                  />
+                )}
 
-                    {/* Metric 4: Pooled Records (Explicitly Labeled as Non-Normalized!) */}
-                    <div className="w-full sm:w-auto pt-2 sm:pt-0 sm:pl-5 space-y-0.5">
-                      <div className="text-[12px] text-[var(--text-secondary)]">
-                        Pooled Observations (Unweighted Sum)
+                {analysisSubTab === 'calendar' && (
+                  <>
+                    {calendarError && (
+                      <div
+                        role="alert"
+                        className="px-4 py-2.5 rounded-md bg-[var(--danger)]/10 border border-[var(--danger)]/40 text-[12px] text-[var(--danger)] flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span>
+                          Could not load the updated observation summary ({calendarError}). Showing
+                          last available snapshot if present.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={retryCalendar}
+                          className="px-3 py-1 rounded bg-[var(--surface-1)] border border-[var(--danger)]/45 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--surface-2)]"
+                        >
+                          Retry query
+                        </button>
                       </div>
-                      <div className="text-[20px] font-mono font-semibold text-[var(--text-primary)] tabular-nums">
-                        {calendarAnalytics.totals.pooled_observation_count.toLocaleString()}
-                      </div>
-                      <div className="text-[11px] text-[var(--text-muted)]">
-                        Not a harmonized cross-sensor or unique fire count
-                      </div>
-                    </div>
-                  </section>
+                    )}
 
-                  {/* 7.3 Main Analysis Grid: Burning-Activity Calendar (8/12) + Geographic Context Map Preview (4/12) */}
-                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
-                    <div className="xl:col-span-8">
-                      <CalendarHeatmap
-                        analytics={calendarAnalytics}
-                        selectedBinKey={selectedBin?.bin_key ?? null}
-                        onSelectBin={(binKey) => updateQueryState({ selectedBinKey: binKey })}
-                        onChangeGranularity={(g) =>
-                          updateQueryState({ granularity: g, selectedBinKey: null })
-                        }
-                        onChangeSensor={(s) => updateQueryState({ sensor: s })}
-                        onChangeMetric={(m) => updateQueryState({ calendarMetric: m })}
-                        onApplyDatePreset={(startDate, endDate, granularity) =>
-                          updateQueryState({
-                            startDate,
-                            endDate,
-                            granularity,
-                            selectedBinKey: null,
-                          })
-                        }
-                        onOpenCompareHistory={() => setAnalysisSubTab('period-compare')}
-                        liveMinDate={liveMinDate}
-                        liveMaxDate={liveMaxDate}
-                      />
-                    </div>
+                    {/* Atlas Ledger Summary Strip (Hairline-Separated, Non-Equated Sensors) */}
+                    <section
+                      aria-label="AOI Activity Summary Strip"
+                      aria-busy={isCalendarLoading}
+                      className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
+                    >
+                      {/* Metric 1: MODIS Detections */}
+                      <div className="p-3.5 md:px-4 md:py-3.5 border-b sm:border-r lg:border-b-0 border-[var(--border-subtle)] space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-[12px] text-[var(--text-secondary)]">
+                          <span className="flex items-center gap-1.5 font-medium">
+                            <span className="w-2.5 h-2.5 bg-[var(--modis-fill)] inline-block rounded-[1px]" />
+                            <span>MODIS Observed Detections</span>
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isCalendarLoading && (
+                              <span className="text-[10px] font-mono text-[var(--text-muted)]">
+                                Querying…
+                              </span>
+                            )}
+                            <InfoPopover title="MODIS Collection 6.1" align="right">
+                              <div className="space-y-1">
+                                <p>
+                                  Nominal ~1 km thermal anomaly detections from Terra and Aqua
+                                  (MODIS Collection 6.1).
+                                </p>
+                                <p>
+                                  Hotspot detections are not automatically confirmed fire incidents,
+                                  and native 0–100 confidence is not equivalent to VIIRS confidence.
+                                </p>
+                              </div>
+                            </InfoPopover>
+                          </div>
+                        </div>
+                        {isCalendarLoading ? (
+                          <div className="h-8 w-28 rounded atlas-skeleton" />
+                        ) : (
+                          <div className="text-[26px] leading-tight font-mono font-semibold text-[var(--modis)] tabular-nums">
+                            {calendarAnalytics.totals.MODIS_detections.toLocaleString()}
+                          </div>
+                        )}
+                        <div className="text-[11px] font-mono text-[var(--text-muted)]">
+                          Terra {calendarAnalytics.totals.platform_totals.TERRA.toLocaleString()} ·
+                          Aqua {calendarAnalytics.totals.platform_totals.AQUA.toLocaleString()}
+                        </div>
+                      </div>
 
-                    {/* Supporting Geographic Context Map Preview */}
-                    <div className="xl:col-span-4 bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] flex flex-col overflow-hidden min-h-[360px]">
-                      <div className="px-3.5 py-2.5 border-b border-[var(--border-subtle)] flex items-center justify-between">
-                        <div>
+                      {/* Metric 2: VIIRS Detections */}
+                      <div className="p-3.5 md:px-4 md:py-3.5 border-b lg:border-b-0 lg:border-r border-[var(--border-subtle)] space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-[12px] font-medium text-[var(--text-secondary)]">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 bg-[var(--viirs-fill)] inline-block rounded-full" />
+                            <span>VIIRS Observed Detections</span>
+                          </span>
+                          <InfoPopover title="VIIRS Collection 2" align="right">
+                            <div className="space-y-1">
+                              <p>
+                                Nominal ~375 m I-band thermal anomaly detections from Suomi-NPP,
+                                NOAA-20, and NOAA-21 (VIIRS Collection 2).
+                              </p>
+                              <p>
+                                Detects smaller and cooler fires than MODIS 1 km, so raw counts
+                                cannot be pooled as sensor-normalized activity. S-NPP archive ends
+                                2026-11-02.
+                              </p>
+                            </div>
+                          </InfoPopover>
+                        </div>
+                        {isCalendarLoading ? (
+                          <div className="h-8 w-28 rounded atlas-skeleton" />
+                        ) : (
+                          <div className="text-[26px] leading-tight font-mono font-semibold text-[var(--viirs)] tabular-nums">
+                            {calendarAnalytics.totals.VIIRS_detections.toLocaleString()}
+                          </div>
+                        )}
+                        <div className="text-[11px] font-mono text-[var(--text-muted)]">
+                          S-NPP {calendarAnalytics.totals.platform_totals.SNPP.toLocaleString()} ·
+                          N20 {calendarAnalytics.totals.platform_totals.NOAA20.toLocaleString()} ·
+                          N21 {calendarAnalytics.totals.platform_totals.NOAA21.toLocaleString()}
+                        </div>
+                      </div>
+
+                      {/* Metric 3: Observed FRP Summary (MW) */}
+                      <div className="p-3.5 md:px-4 md:py-3.5 border-b sm:border-b-0 sm:border-r border-[var(--border-subtle)] space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-[12px] font-medium text-[var(--text-secondary)]">
+                          <span>Observed FRP · MW (Mean)</span>
+                          <InfoPopover
+                            title="Fire Radiative Power (MW)"
+                            align="right"
+                          >
+                            <div className="space-y-1">
+                              <p>
+                                Fire Radiative Power (MW) — instantaneous heat output at satellite
+                                overpass, not burned area, fire perimeter, or total fire size.
+                              </p>
+                              <p>
+                                Means are calculated separately per sensor across records with valid
+                                finite FRP values.
+                              </p>
+                            </div>
+                          </InfoPopover>
+                        </div>
+                        {isCalendarLoading ? (
+                          <div className="h-8 w-40 rounded atlas-skeleton" />
+                        ) : (
+                          <div className="text-[20px] leading-tight py-0.5 font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                            M: {calendarAnalytics.totals.MODIS_frp.mean_mw ?? '—'} MW · V:{' '}
+                            {calendarAnalytics.totals.VIIRS_frp.mean_mw ?? '—'} MW
+                          </div>
+                        )}
+                        <div className="text-[11px] font-mono text-[var(--text-muted)]">
+                          Valid: M ({calendarAnalytics.totals.MODIS_frp.valid_count.toLocaleString()})
+                          {' '}· V ({calendarAnalytics.totals.VIIRS_frp.valid_count.toLocaleString()})
+                        </div>
+                      </div>
+
+                      {/* Metric 4: Pooled Records */}
+                      <div className="p-3.5 md:px-4 md:py-3.5 space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-[12px] font-medium text-[var(--text-secondary)]">
+                          <span>Pooled Observation Records</span>
+                          <InfoPopover
+                            title="Pooled Observation Records"
+                            align="right"
+                          >
+                            <div className="space-y-1">
+                              <p>
+                                Unweighted sum across sensors (MODIS + VIIRS), not unique fire
+                                incidents or normalized fire activity.
+                              </p>
+                              <p>
+                                Because MODIS (1 km) and VIIRS (375 m) differ in pixel footprint and
+                                overpass timing, one fire can produce multiple detections.
+                              </p>
+                            </div>
+                          </InfoPopover>
+                        </div>
+                        {isCalendarLoading ? (
+                          <div className="h-8 w-28 rounded atlas-skeleton" />
+                        ) : (
+                          <div className="text-[24px] leading-tight font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                            {calendarAnalytics.totals.pooled_observation_count.toLocaleString()}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-[var(--text-muted)]">
+                          Unweighted sensor sum
+                        </div>
+                      </div>
+                    </section>
+
+                    {/* Main Analysis Grid: Burning-Activity Calendar (8/12) + Geographic Context Map Preview (4/12) */}
+                    <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
+                      <div className="xl:col-span-8">
+                        <CalendarHeatmap
+                          analytics={calendarAnalytics}
+                          selectedBinKey={selectedBin?.bin_key ?? null}
+                          onSelectBin={(binKey) => updateQueryState({ selectedBinKey: binKey })}
+                          onChangeGranularity={(g) =>
+                            updateQueryState({ granularity: g, selectedBinKey: null })
+                          }
+                          onChangeSensor={(s) => updateQueryState({ sensor: s })}
+                          onChangeMetric={(m) => updateQueryState({ calendarMetric: m })}
+                          onApplyDatePreset={(startDate, endDate, granularity) =>
+                            updateQueryState({
+                              startDate,
+                              endDate,
+                              granularity,
+                              selectedBinKey: null,
+                            })
+                          }
+                          isLoading={isCalendarLoading}
+                          liveMinDate={liveMinDate}
+                          liveMaxDate={liveMaxDate}
+                        />
+                      </div>
+
+                      {/* Supporting Geographic Context Map Preview */}
+                      <div className="xl:col-span-4 bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md flex flex-col overflow-hidden min-h-[360px]">
+                        <div className="px-3.5 py-2.5 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2">
                           <h2 className="text-[14px] font-semibold text-[var(--text-primary)]">
                             AOI Spatial Context
                           </h2>
-                          <div className="text-[11px] text-[var(--text-secondary)]">
-                            Synchronized with selected date &amp; sensor filters
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsLayersOpen((prev) => !prev)}
+                            className="px-2.5 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1 transition-colors"
+                          >
+                            <SlidersHorizontal className="w-3 h-3 text-[var(--ember)]" />
+                            <span>Filters</span>
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setIsLayersOpen((prev) => !prev)}
-                          className="px-2 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)] flex items-center gap-1"
-                        >
-                          <SlidersHorizontal className="w-3 h-3 text-[var(--ember)]" />
-                          <span>Filters</span>
-                        </button>
-                      </div>
-                      <div className="flex-1 relative min-h-[300px]">
-                        <MapCanvas
-                          activeAoi={activeAoi}
-                          observations={mapObservations}
-                          selectedObservationId={queryState.selectedObservationId}
-                          onSelectObservation={(obs) =>
-                            updateQueryState({ selectedObservationId: obs.observation_id })
-                          }
-                          basemap={basemap}
-                          onChangeBasemap={setBasemap}
-                          overlays={overlays}
-                          interactionMode="pan"
-                          measurePoints={[]}
-                          onAddMeasurePoint={() => {}}
-                          measureUnitSystem={measureUnitSystem}
-                          compactPreview
-                          onOpenFullMap={() => setActiveRoute('map')}
-                          visiblePlatforms={queryState.platforms}
-                          onViewportChange={setMapViewport}
-                          hotspotsMeta={hotspotsMeta}
-                          excludeOffshore={queryState.excludeOffshore}
-                        />
+                        <div className="flex-1 relative min-h-[300px]">
+                          <MapCanvas
+                            activeAoi={activeAoi}
+                            observations={mapObservations}
+                            selectedObservationId={queryState.selectedObservationId}
+                            onSelectObservation={(obs) =>
+                              updateQueryState({ selectedObservationId: obs.observation_id })
+                            }
+                            basemap={basemap}
+                            onChangeBasemap={setBasemap}
+                            overlays={overlays}
+                            interactionMode="pan"
+                            measurePoints={[]}
+                            onAddMeasurePoint={() => {}}
+                            measureUnitSystem={measureUnitSystem}
+                            compactPreview
+                            onOpenFullMap={() => setActiveRoute('map')}
+                            visiblePlatforms={queryState.platforms}
+                            onViewportChange={setMapViewport}
+                            hotspotsMeta={hotspotsMeta}
+                            excludeOffshore={queryState.excludeOffshore}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* 7.5 Sensor & Platform Time-Series Comparison Chart */}
-                  <SensorComparisonChart
-                    analytics={calendarAnalytics}
-                    selectedBinKey={selectedBin?.bin_key ?? null}
-                    onSelectBin={(binKey) => updateQueryState({ selectedBinKey: binKey })}
-                  />
-
-                  {/* 7.6 Selected Time-Bin Detail & Canonical Observation Records */}
-                  {selectedBin && (
-                    <SelectedBinDetail
+                    {/* Sensor & Platform Time-Series Comparison Chart */}
+                    <SensorComparisonChart
                       analytics={calendarAnalytics}
-                      selectedBin={selectedBin}
-                      binObservations={selectedBinObservations}
-                      totalMatchingObservations={selectedBinTotalMatching}
-                      selectedObservationId={queryState.selectedObservationId}
-                      onSelectObservation={(obs) =>
-                        updateQueryState({ selectedObservationId: obs.observation_id })
-                      }
-                      onOpenMethodology={() => setActiveRoute('methodology')}
-                      onOpenDataSources={() => setActiveRoute('data-sources')}
+                      selectedBinKey={selectedBin?.bin_key ?? null}
+                      onSelectBin={(binKey) => updateQueryState({ selectedBinKey: binKey })}
+                      isLoading={isCalendarLoading}
                     />
-                  )}
-                </>
-              )}
+
+                    {/* Selected Time-Bin Detail & Canonical Observation Records */}
+                    {selectedBin && (
+                      <SelectedBinDetail
+                        analytics={calendarAnalytics}
+                        selectedBin={selectedBin}
+                        binObservations={selectedBinObservations}
+                        totalMatchingObservations={selectedBinTotalMatching}
+                        isLoadingObservations={isBinObservationsLoading}
+                        selectedObservationId={queryState.selectedObservationId}
+                        onSelectObservation={(obs) =>
+                          updateQueryState({ selectedObservationId: obs.observation_id })
+                        }
+                        onOpenMethodology={() => setActiveRoute('methodology')}
+                        onOpenDataSources={() => setActiveRoute('data-sources')}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
             </div>
 
-            {/* Optional Filter / Layer Drawer & Observation Inspector in Analysis Workspace */}
             <LayerDrawer
               isOpen={isLayersOpen}
               onClose={() => setIsLayersOpen(false)}
@@ -1335,9 +820,7 @@ export default function App() {
               queryState={queryState}
               onUpdateQueryState={updateQueryState}
               overlays={overlays}
-              onUpdateOverlays={(patch) =>
-                setOverlays((prev) => ({ ...prev, ...patch }))
-              }
+              onUpdateOverlays={(patch) => setOverlays((prev) => ({ ...prev, ...patch }))}
               basemap={basemap}
               onChangeBasemap={setBasemap}
               mapDisplayMode={mapDisplayMode}
@@ -1346,10 +829,7 @@ export default function App() {
               onChangeGridResolutionDeg={setGridResolutionDeg}
               autoRefreshMs={autoRefreshMs}
               onChangeAutoRefreshMs={setAutoRefreshMs}
-              onManualRefresh={() => {
-                setRefreshNonce((n) => n + 1);
-                showToast('Refreshing live NASA FIRMS streams...');
-              }}
+              onManualRefresh={triggerManualRefresh}
             />
 
             <ObservationInspector
@@ -1381,13 +861,13 @@ export default function App() {
         )}
       </main>
 
-      {/* Capture Snapshot Modal (Section 6.6) */}
+      {/* Capture Snapshot Modal */}
       {isCaptureModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div
             role="dialog"
             aria-label="Export Map & Provenance Snapshot"
-            className="w-full max-w-lg bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-2xl p-5 space-y-4"
+            className="w-full max-w-lg bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md shadow-2xl p-5 space-y-4"
           >
             <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
               <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
@@ -1403,7 +883,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="p-3.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] font-mono text-[11px] space-y-1.5">
+            <div className="p-3.5 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] font-mono text-[11px] space-y-1.5">
               <div>
                 <strong>AOI:</strong> {activeAoi.name} ([{activeAoi.bbox.west},{' '}
                 {activeAoi.bbox.south}, {activeAoi.bbox.east}, {activeAoi.bbox.north}])
@@ -1429,7 +909,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsCaptureModalOpen(false)}
-                className="h-8 px-3 rounded-[6px] bg-[var(--surface-2)] text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                className="h-8 px-3 rounded bg-[var(--surface-2)] text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               >
                 Cancel
               </button>
@@ -1439,7 +919,7 @@ export default function App() {
                   handleDownloadCsv();
                   setIsCaptureModalOpen(false);
                 }}
-                className="h-8 px-3 rounded-[6px] bg-[var(--ember)] hover:bg-[var(--ember-hover)] text-white text-[12px] font-medium"
+                className="h-8 px-3 rounded bg-[var(--ember)] hover:bg-[var(--ember-hover)] text-white text-[12px] font-medium"
               >
                 Download Provenance CSV Snapshot
               </button>
@@ -1448,13 +928,13 @@ export default function App() {
         </div>
       )}
 
-      {/* Help & Keyboard Shortcuts Dialog (Section 6.6 & 11.3) */}
+      {/* Help & Keyboard Shortcuts Dialog */}
       {isHelpModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div
             role="dialog"
             aria-label="Help, Scientific Guide and Keyboard Shortcuts"
-            className="w-full max-w-xl bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] shadow-2xl p-5 space-y-4 max-h-[88vh] overflow-y-auto"
+            className="w-full max-w-xl bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md shadow-2xl p-5 space-y-4 max-h-[88vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
               <div className="flex items-center gap-2">
@@ -1474,7 +954,7 @@ export default function App() {
             </div>
 
             <div className="space-y-3 text-[12px] text-[var(--text-secondary)] leading-relaxed">
-              <div className="p-3 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-1">
+              <div className="p-3 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-1">
                 <div className="font-semibold text-[var(--text-primary)]">
                   What does an active-fire detection represent?
                 </div>
@@ -1489,7 +969,7 @@ export default function App() {
                 <div className="font-semibold text-[var(--text-primary)] mb-1.5">
                   Keyboard Navigation
                 </div>
-                <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-[11px]">
                   <div className="p-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] flex justify-between">
                     <span>Tab / Shift+Tab</span>
                     <span className="text-[var(--text-primary)]">Move focus</span>
@@ -1524,7 +1004,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsHelpModalOpen(false)}
-                className="h-8 px-4 rounded-[6px] bg-[var(--ember)] text-white font-medium"
+                className="h-8 px-4 rounded bg-[var(--ember)] hover:bg-[var(--ember-hover)] text-white font-medium transition-colors"
               >
                 Close
               </button>

@@ -45,16 +45,25 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   isDark,
   onToggleTheme,
 }) => {
+  const desktopTabClass = (route: AppRoute, hideBelowXl = false) =>
+    `${
+      hideBelowXl ? 'hidden xl:flex' : 'flex'
+    } h-full px-2.5 text-[12px] font-medium items-center gap-1.5 border-b-2 transition-colors whitespace-nowrap ${
+      activeRoute === route
+        ? 'border-[var(--ember)] text-[var(--text-primary)] font-semibold'
+        : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)]'
+    }`;
+
   return (
-    <header className="h-14 px-2 sm:px-3 md:px-4 bg-[var(--surface-1)] border-b border-[var(--border-subtle)] flex items-center justify-between gap-1.5 sm:gap-2.5 shrink-0 z-30 select-none w-full max-w-full overflow-hidden">
-      {/* Left Group: Menu + FireScope Wordmark + Workspace Switcher */}
-      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+    <header className="h-14 px-2.5 sm:px-3.5 md:px-5 bg-[var(--surface-1)] border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 shrink-0 z-30 select-none w-full max-w-full overflow-hidden">
+      {/* Left Group: Menu + Field Atlas Wordmark + Navigation Tabs */}
+      <div className="flex items-center gap-2 sm:gap-3 h-full shrink-0">
         <button
           type="button"
           onClick={onOpenNavDrawer}
           aria-label="Open primary navigation"
           title="Navigation menu"
-          className="min-w-[44px] min-h-[44px] md:min-w-9 md:min-h-9 md:w-9 md:h-9 rounded-md flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)] focus-visible:outline-2 focus-visible:outline-[var(--ember)] transition-colors shrink-0"
+          className="min-w-[44px] min-h-[44px] md:min-w-8 md:min-h-8 md:w-8 md:h-8 rounded-md flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)] transition-colors shrink-0"
         >
           <Menu className="w-4 h-4" />
         </button>
@@ -62,13 +71,14 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('map')}
-          className="flex items-baseline gap-2 text-left focus-visible:outline-2 focus-visible:outline-[var(--ember)] rounded px-1 py-1 shrink-0"
+          className="flex items-center gap-2 text-left rounded px-1 py-1 shrink-0"
         >
+          <span
+            aria-hidden="true"
+            className="w-2.5 h-2.5 border-[1.5px] border-[var(--ember)] bg-[var(--ember)]/20 inline-block shrink-0"
+          />
           <span className="text-[15px] sm:text-[16px] font-semibold tracking-tight text-[var(--text-primary)] whitespace-nowrap">
             FireScope
-          </span>
-          <span className="hidden 2xl:inline text-[11px] text-[var(--text-muted)] whitespace-nowrap">
-            Active Fire Intelligence
           </span>
         </button>
 
@@ -76,19 +86,15 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
           |
         </span>
 
-        {/* Workspace Mode Switcher: Compact on Mobile/Tablet/1024, Full on >=1280px */}
+        {/* Primary Workspaces Navigation */}
         <nav
           aria-label="Primary workspaces"
-          className="flex items-center bg-[var(--app-bg)] p-0.5 rounded-md border border-[var(--border-subtle)] shrink-0"
+          className="flex items-center h-full gap-0.5 sm:gap-1 shrink-0"
         >
           <button
             type="button"
             onClick={() => onNavigate('map')}
-            className={`min-h-[34px] md:min-h-0 px-2 py-1 rounded text-[11px] sm:text-[12px] font-medium flex items-center gap-1 sm:gap-1.5 transition-colors whitespace-nowrap ${
-              activeRoute === 'map'
-                ? 'bg-[var(--surface-2)] text-[var(--text-primary)] shadow-xs border border-[var(--border-subtle)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
+            className={desktopTabClass('map')}
           >
             <MapIcon className="hidden sm:block w-3.5 h-3.5 text-[var(--ember)] shrink-0" />
             <span className="hidden xl:inline">Map Explorer</span>
@@ -97,11 +103,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('analysis')}
-            className={`min-h-[34px] md:min-h-0 px-2 py-1 rounded text-[11px] sm:text-[12px] font-medium flex items-center gap-1 sm:gap-1.5 transition-colors whitespace-nowrap ${
-              activeRoute === 'analysis'
-                ? 'bg-[var(--surface-2)] text-[var(--text-primary)] shadow-xs border border-[var(--border-subtle)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
+            className={desktopTabClass('analysis')}
           >
             <Calendar className="hidden sm:block w-3.5 h-3.5 text-[var(--ember)] shrink-0" />
             <span className="hidden xl:inline">AOI Analysis</span>
@@ -110,48 +112,40 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('data-sources')}
-            className={`hidden xl:flex px-2 py-1 rounded text-[12px] font-medium items-center gap-1.5 transition-colors whitespace-nowrap ${
-              activeRoute === 'data-sources'
-                ? 'bg-[var(--surface-2)] text-[var(--text-primary)] shadow-xs border border-[var(--border-subtle)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
+            className={desktopTabClass('data-sources', true)}
           >
-            <Database className="w-3.5 h-3.5" />
+            <Database className="w-3.5 h-3.5 text-[var(--text-muted)]" />
             <span>Sources</span>
           </button>
           <button
             type="button"
             onClick={() => onNavigate('methodology')}
-            className={`hidden xl:flex px-2 py-1 rounded text-[12px] font-medium items-center gap-1.5 transition-colors whitespace-nowrap ${
-              activeRoute === 'methodology'
-                ? 'bg-[var(--surface-2)] text-[var(--text-primary)] shadow-xs border border-[var(--border-subtle)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
+            className={desktopTabClass('methodology', true)}
           >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <FileSpreadsheet className="w-3.5 h-3.5 text-[var(--text-muted)]" />
             <span>Methods</span>
           </button>
           <button
             type="button"
             onClick={() => onNavigate('about')}
-            className={`hidden xl:flex px-2 py-1 rounded text-[12px] font-medium items-center gap-1.5 transition-colors whitespace-nowrap ${
-              activeRoute === 'about'
-                ? 'bg-[var(--surface-2)] text-[var(--text-primary)] shadow-xs border border-[var(--border-subtle)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
+            className={desktopTabClass('about', true)}
           >
             <span>About</span>
           </button>
         </nav>
       </div>
 
-      {/* Center Group: Active AOI & Date Window Quick Triggers (>=1024px Desktop) */}
-      <div className="hidden lg:flex items-center gap-1.5 min-w-0 shrink-0">
+      {/* Center Group: Unified AOI & Date Window Context Control (>=1024px Desktop) */}
+      <div
+        role="group"
+        aria-label="Active query context"
+        className="hidden lg:flex items-center h-8 rounded-md bg-[var(--surface-2)] border border-[var(--border-subtle)] divide-x divide-[var(--border-subtle)] min-w-0 shrink-0 overflow-hidden"
+      >
         <button
           type="button"
           onClick={onOpenAoiTool}
           title="Change or draw Area of Interest (AOI)"
-          className="h-8 px-2.5 rounded-md bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] flex items-center gap-1.5 text-[12px] text-[var(--text-primary)] transition-colors max-w-[165px] xl:max-w-[190px] min-w-0 focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
+          className="h-full px-2.5 hover:bg-[var(--surface-3)] flex items-center gap-1.5 text-[12px] text-[var(--text-primary)] transition-colors max-w-[165px] xl:max-w-[195px] min-w-0"
         >
           <Compass className="w-3.5 h-3.5 text-[var(--ember)] shrink-0" />
           <span className="truncate font-medium">{activeAoi.name}</span>
@@ -161,7 +155,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
           type="button"
           onClick={onOpenTimelineTool}
           title="Adjust observation date window and granularity"
-          className="h-8 px-2 rounded-md bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] flex items-center gap-1 text-[11px] text-[var(--text-primary)] font-mono tabular-nums transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
+          className="h-full px-2.5 hover:bg-[var(--surface-3)] flex items-center gap-1.5 text-[11px] text-[var(--text-primary)] font-mono tabular-nums transition-colors whitespace-nowrap shrink-0"
         >
           <span>
             {queryState.startDate} → {queryState.endDate}
@@ -177,9 +171,9 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
       <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
         <button
           type="button"
-          onClick={() => onNavigate('about')}
-          title="Synchronized with Official NASA FIRMS Live Open Data CSV Streams (MODIS C6.1 & VIIRS C2) — Click to view Data Architecture in About"
-          className="min-h-[36px] md:min-h-0 h-9 md:h-8 px-2 sm:px-2.5 rounded-md bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--success)]/45 flex items-center gap-1.5 text-[10px] sm:text-[11px] transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
+          onClick={() => onNavigate('data-sources')}
+          title="Live NASA FIRMS EOSDIS data status — Click to inspect Data Sources"
+          className="min-h-[36px] md:min-h-0 h-8 px-2 sm:px-2.5 rounded-md bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] flex items-center gap-1.5 text-[10px] sm:text-[11px] transition-colors whitespace-nowrap shrink-0"
         >
           <span className="w-2 h-2 rounded-full bg-[var(--success)] inline-block shrink-0" />
           <span className="font-mono font-semibold text-[var(--success)] sm:hidden">
@@ -214,7 +208,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
           onClick={onShareView}
           aria-label="Share reproducible view link"
           title="Copy reproducible view URL"
-          className="hidden sm:flex min-w-[40px] min-h-[40px] md:min-w-8 md:min-h-8 md:w-8 md:h-8 rounded-md items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)] border border-transparent hover:border-[var(--border-subtle)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
+          className="hidden sm:flex min-w-[40px] min-h-[40px] md:min-w-8 md:min-h-8 md:w-8 md:h-8 rounded-md items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)] border border-transparent hover:border-[var(--border-subtle)] transition-colors"
         >
           <Share2 className="w-4 h-4" />
         </button>
@@ -222,11 +216,12 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
         <button
           type="button"
           onClick={onToggleTheme}
-          aria-label={isDark ? 'Switch to Field Atlas Light theme' : 'Switch to Field Atlas Dark theme'}
-          title={isDark ? 'Switch to Light theme' : 'Switch to Dark theme'}
-          className="min-w-[44px] min-h-[44px] md:min-w-8 md:min-h-8 md:w-8 md:h-8 rounded-md flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)] border border-transparent hover:border-[var(--border-subtle)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
+          aria-label={isDark ? 'Switch to Field Atlas Light theme' : 'Switch to Night Orbit Dark theme'}
+          title={isDark ? 'Switch to Field Atlas Light' : 'Switch to Night Orbit Dark'}
+          className="min-w-[44px] min-h-[44px] md:min-w-8 md:min-h-8 md:h-8 md:px-2 rounded-md flex items-center justify-center gap-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)] border border-transparent hover:border-[var(--border-subtle)] transition-colors"
         >
-          {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {isDark ? <Sun className="w-4 h-4 shrink-0" /> : <Moon className="w-4 h-4 shrink-0" />}
+          <span className="hidden 2xl:inline">{isDark ? 'Dark' : 'Light'}</span>
         </button>
 
         <button
@@ -234,7 +229,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
           onClick={onOpenHelpModal}
           aria-label="Help and keyboard shortcuts"
           title="Help, scientific guide & keyboard shortcuts"
-          className="hidden sm:flex min-w-[40px] min-h-[40px] md:min-w-8 md:min-h-8 md:w-8 md:h-8 rounded-md items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)] border border-transparent hover:border-[var(--border-subtle)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
+          className="hidden sm:flex min-w-[40px] min-h-[40px] md:min-w-8 md:min-h-8 md:w-8 md:h-8 rounded-md items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-2)] border border-transparent hover:border-[var(--border-subtle)] transition-colors"
         >
           <HelpCircle className="w-4 h-4" />
         </button>

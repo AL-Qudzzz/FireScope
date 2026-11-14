@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Bookmark,
   Camera,
@@ -44,6 +44,7 @@ import {
   BasemapStyle,
   MapOverlaySettings,
 } from './MapCanvas';
+import { InfoPopover } from './ProgressiveDisclosure';
 
 export type DockToolId =
   | 'aoi'
@@ -198,6 +199,20 @@ export const AoiSearchPanel: React.FC<AoiSearchPanelProps> = ({
   const [editingSavedId, setEditingSavedId] = useState<string | null>(null);
   const [editingSavedText, setEditingSavedText] = useState('');
   const [coordError, setCoordError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setWestInput(String(activeAoi.bbox.west));
+    setSouthInput(String(activeAoi.bbox.south));
+    setEastInput(String(activeAoi.bbox.east));
+    setNorthInput(String(activeAoi.bbox.north));
+    setCoordError(null);
+  }, [
+    activeAoi.id,
+    activeAoi.bbox.west,
+    activeAoi.bbox.south,
+    activeAoi.bbox.east,
+    activeAoi.bbox.north,
+  ]);
 
   const filteredPresets = PRESET_AOIS.filter(
     (a) =>
@@ -974,7 +989,9 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
                         <div className="flex items-center gap-2">
                           <span
                             className={`w-2.5 h-2.5 inline-block ${
-                              p.sensor === 'MODIS' ? 'bg-[#FFB454] rounded-[1px]' : 'bg-[#61BDE0] rounded-full'
+                              p.sensor === 'MODIS'
+                              ? 'bg-[var(--modis-fill)] rounded-[1px]'
+                              : 'bg-[var(--viirs-fill)] rounded-full'
                             }`}
                           />
                           <span className="text-[13px] font-medium text-[var(--text-primary)]">
@@ -1108,9 +1125,15 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
                 aria-label="Minimum MODIS numeric confidence"
                 className="w-full accent-[var(--modis)]"
               />
-              <div className="text-[10px] text-[var(--text-muted)] mt-1">
-                Note: Historical Parquet daily bins group confidence into &lt;30, ≥30, ≥80 buckets;
-                live/raw views filter exact 0–100 values.
+              <div className="mt-1.5 flex items-center justify-end">
+                <InfoPopover
+                  title="Historical Confidence Grouping"
+                  triggerLabel="Archive note"
+                  align="right"
+                >
+                  Historical archive daily bins group MODIS confidence into &lt;30, ≥30, and ≥80
+                  buckets; live and individual observation views filter exact 0–100 values.
+                </InfoPopover>
               </div>
             </div>
 
@@ -1281,7 +1304,7 @@ export const LayerDrawer: React.FC<LayerDrawerProps> = ({
             <div>
               <div className="font-medium text-[var(--text-primary)]">Live Feed Auto-Refresh</div>
               <div className="text-[10px] text-[var(--text-muted)]">
-                Syncs /api/v1/data/status &amp; active view
+                Syncs live satellite feeds &amp; active view
               </div>
             </div>
             <div className="flex items-center gap-1">
@@ -1368,6 +1391,29 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
   liveMaxDate = '2026-11-13',
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const selectedBinKeyRef = useRef(queryState.selectedBinKey);
+  selectedBinKeyRef.current = queryState.selectedBinKey;
+  const onUpdateQueryStateRef = useRef(onUpdateQueryState);
+  onUpdateQueryStateRef.current = onUpdateQueryState;
+
+  useEffect(() => {
+    if (!isOpen || series.length <= 1) {
+      setIsPlaying(false);
+      return;
+    }
+    if (!isPlaying) return;
+
+    const timerId = window.setInterval(() => {
+      const currentIdx = Math.max(
+        0,
+        series.findIndex((b) => b.bin_key === selectedBinKeyRef.current)
+      );
+      const nextIdx = (currentIdx + 1) % series.length;
+      onUpdateQueryStateRef.current({ selectedBinKey: series[nextIdx].bin_key });
+    }, 1200);
+
+    return () => window.clearInterval(timerId);
+  }, [isPlaying, isOpen, series]);
 
   if (!isOpen) return null;
 
@@ -1525,15 +1571,18 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
           </button>
           <button
             type="button"
+            disabled={series.length <= 1}
             onClick={() => {
+              if (series.length <= 1) return;
               if (!isPlaying) {
-                stepBin(1);
+                const nextIdx = (activeBinIdx + 1) % series.length;
+                onUpdateQueryState({ selectedBinKey: series[nextIdx].bin_key });
               }
               setIsPlaying((prev) => !prev);
             }}
             aria-label={isPlaying ? 'Pause step playback' : 'Step forward'}
             title="Step through selected time bins"
-            className="w-8 h-8 sm:w-7 sm:h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] flex items-center justify-center text-[var(--ember)]"
+            className="w-8 h-8 sm:w-7 sm:h-7 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] disabled:opacity-40 flex items-center justify-center text-[var(--ember)]"
           >
             {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
           </button>
@@ -1577,11 +1626,11 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
                   <>
                     <span
                       style={{ height: `${modisH}%` }}
-                      className="w-1.5 bg-[#FFB454] rounded-t-[1px]"
+                      className="w-1.5 bg-[var(--modis-fill)] rounded-t-[1px]"
                     />
                     <span
                       style={{ height: `${viirsH}%` }}
-                      className="w-1.5 bg-[#61BDE0] rounded-t-[1px]"
+                      className="w-1.5 bg-[var(--viirs-fill)] rounded-t-[1px]"
                     />
                   </>
                 )}
@@ -1598,11 +1647,11 @@ export const TimelineTray: React.FC<TimelineTrayProps> = ({
                 {currentBin.label} (UTC)
               </div>
               <div className="text-[var(--text-secondary)]">
-                <span className="text-[#FFB454]">
+                <span className="text-[var(--modis)]">
                   MODIS: {currentBin.values.MODIS ?? 'N/A'}
                 </span>{' '}
                 ·{' '}
-                <span className="text-[#61BDE0]">
+                <span className="text-[var(--viirs)]">
                   VIIRS: {currentBin.values.VIIRS ?? 'N/A'}
                 </span>
               </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -26,6 +26,7 @@ import {
   generateAoiComparisonCsv,
   generatePeriodComparisonCsv,
 } from '../services/firescopeApi';
+import { DisclosureAccordion, InfoPopover } from './ProgressiveDisclosure';
 
 type SeasonWindowPreset = 'dry-jul-nov' | 'full-year' | 'recent-30d' | 'custom';
 
@@ -168,26 +169,62 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState<number>(0);
 
-  const applySimpleYearSelection = (
-    nextYearA: number,
-    nextYearB: number,
-    nextSeason: Exclude<SeasonWindowPreset, 'custom'>
-  ) => {
-    const rA = formatYearRange(nextYearA, nextSeason, liveMaxDate);
-    const rB = formatYearRange(nextYearB, nextSeason, liveMaxDate);
-    setYearA(nextYearA);
-    setYearB(nextYearB);
-    setSeasonMode(nextSeason);
-    setPeriodAStart(rA.start);
-    setPeriodAEnd(rA.end);
-    setPeriodALabel(rA.label);
-    setPeriodBStart(rB.start);
-    setPeriodBEnd(rB.end);
-    setPeriodBLabel(rB.label);
-    setGranularity(rA.granularity);
-  };
+  const applySimpleYearSelection = useCallback(
+    (
+      nextYearA: number,
+      nextYearB: number,
+      nextSeason: Exclude<SeasonWindowPreset, 'custom'>
+    ) => {
+      const rA = formatYearRange(nextYearA, nextSeason, liveMaxDate);
+      const rB = formatYearRange(nextYearB, nextSeason, liveMaxDate);
+      setYearA(nextYearA);
+      setYearB(nextYearB);
+      setSeasonMode(nextSeason);
+      setPeriodAStart(rA.start);
+      setPeriodAEnd(rA.end);
+      setPeriodALabel(rA.label);
+      setPeriodBStart(rB.start);
+      setPeriodBEnd(rB.end);
+      setPeriodBLabel(rB.label);
+      setGranularity(rA.granularity);
+    },
+    [liveMaxDate]
+  );
 
   useEffect(() => {
+    if (
+      !inIndonesiaBounds &&
+      (yearA < 2024 ||
+        yearB < 2024 ||
+        periodAStart < '2024-01-01' ||
+        periodBStart < '2024-01-01')
+    ) {
+      applySimpleYearSelection(
+        2025,
+        2026,
+        seasonMode === 'custom' ? 'dry-jul-nov' : seasonMode
+      );
+    }
+  }, [
+    inIndonesiaBounds,
+    yearA,
+    yearB,
+    periodAStart,
+    periodBStart,
+    seasonMode,
+    applySimpleYearSelection,
+  ]);
+
+  useEffect(() => {
+    if (
+      !inIndonesiaBounds &&
+      (yearA < 2024 ||
+        yearB < 2024 ||
+        periodAStart < '2024-01-01' ||
+        periodBStart < '2024-01-01')
+    ) {
+      return;
+    }
     if (Date.parse(`${periodAStart}T00:00:00Z`) > Date.parse(`${periodAEnd}T23:59:59Z`)) {
       setErrorMsg('Period A end date must be on or after Period A start date.');
       setLoading(false);
@@ -323,7 +360,7 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
             <Info className="w-4 h-4 text-[var(--viirs)] shrink-0" />
             <span>
               You are viewing Global scope (baseline snapshot). Switch to an Indonesia archive region
-              to explore 2001–2026 NASA FIRMS Parquet history:
+              to explore 2001–2026 NASA FIRMS historical records:
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -665,13 +702,21 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
 
             {/* 4. Concise Continuity & Data Quality Context Note */}
             {data.availability_warnings.length > 0 && (
-              <div className="px-4 md:px-5 py-3 bg-[var(--warning)]/6 text-[12px] text-[var(--text-secondary)] space-y-1">
-                {data.availability_warnings.map((w, i) => (
-                  <div key={i} className="flex items-start gap-2">
-                    <AlertTriangle className="w-3.5 h-3.5 text-[var(--warning)] shrink-0 mt-0.5" />
-                    <span>{w}</span>
+              <div className="px-4 md:px-5 py-3">
+                <DisclosureAccordion
+                  title="Sensor Continuity & Comparability Notes"
+                  summaryBadge={`${data.availability_warnings.length} note(s)`}
+                  defaultOpen={false}
+                >
+                  <div className="px-3 py-2.5 rounded-[6px] bg-[var(--warning)]/6 border border-[var(--border-subtle)] text-[12px] text-[var(--text-secondary)] space-y-1.5">
+                    {data.availability_warnings.map((w, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 text-[var(--warning)] shrink-0 mt-0.5" />
+                        <span>{w}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </DisclosureAccordion>
               </div>
             )}
 
@@ -1017,7 +1062,9 @@ export const AoiComparisonPanel: React.FC<AoiComparisonPanelProps> = ({
               {queryState.startDate} → {queryState.endDate} (UTC {queryState.granularity})
             </span>
             <span aria-hidden="true">·</span>
-            <span>Method M2</span>
+            <InfoPopover title="Regional Comparison Method" triggerLabel="Comparison rules">
+              {data?.method.caveat ?? 'Compares regions per sensor and per 1,000 km² without pooling sensors.'}
+            </InfoPopover>
           </div>
         </div>
 
@@ -1085,13 +1132,21 @@ export const AoiComparisonPanel: React.FC<AoiComparisonPanelProps> = ({
         data && (
           <>
             {data.comparability_warnings.length > 0 && (
-              <div className="px-4 md:px-5 py-3 bg-[var(--warning)]/6 text-[12px] text-[var(--text-secondary)] space-y-1">
-                {data.comparability_warnings.map((w, i) => (
-                  <div key={i} className="flex items-start gap-2">
-                    <AlertTriangle className="w-3.5 h-3.5 text-[var(--warning)] shrink-0 mt-0.5" />
-                    <span>{w}</span>
+              <div className="px-4 md:px-5 py-3">
+                <DisclosureAccordion
+                  title="Sensor Continuity & Comparability Notes"
+                  summaryBadge={`${data.comparability_warnings.length} note(s)`}
+                  defaultOpen={false}
+                >
+                  <div className="px-3 py-2.5 rounded-[6px] bg-[var(--warning)]/6 border border-[var(--border-subtle)] text-[12px] text-[var(--text-secondary)] space-y-1.5">
+                    {data.comparability_warnings.map((w, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 text-[var(--warning)] shrink-0 mt-0.5" />
+                        <span>{w}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </DisclosureAccordion>
               </div>
             )}
 
@@ -1214,11 +1269,6 @@ export const AoiComparisonPanel: React.FC<AoiComparisonPanelProps> = ({
                     )}
                   </div>
                 ))}
-              </div>
-
-              <div className="text-[11px] text-[var(--text-muted)] flex items-start gap-2 pt-2 border-t border-[var(--border-subtle)]">
-                <Info className="w-3.5 h-3.5 text-[var(--viirs)] shrink-0 mt-0.5" />
-                <span>{data.method.caveat}</span>
               </div>
             </div>
           </>

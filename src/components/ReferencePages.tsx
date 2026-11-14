@@ -1,15 +1,7 @@
 import React from 'react';
-import {
-  AlertTriangle,
-  BookOpen,
-  CheckCircle2,
-  Database,
-  ExternalLink,
-  FileCheck2,
-  Info,
-  ShieldAlert,
-} from 'lucide-react';
+import { Database, FileCheck2 } from 'lucide-react';
 import { DataStatusResponse } from '../types/firescope';
+import { DisclosureAccordion, InfoPopover } from './ProgressiveDisclosure';
 
 export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
   dataStatus,
@@ -52,52 +44,52 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
 
       {/* 4-Concept Source Status Distinction Strip (Section 9.1) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1">
-          <div className="text-[11px] font-medium text-[var(--text-muted)]">
-            01. Latest Acquisition
+        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1.5">
+          <div className="flex items-center justify-between gap-2 text-[11px] font-medium text-[var(--text-muted)]">
+            <span>01. Latest Acquisition</span>
+            <InfoPopover title="Latest Acquisition" align="right">
+              Newest satellite overpass timestamp represented in the loaded observation records.
+            </InfoPopover>
           </div>
           <div className="text-[14px] font-mono font-semibold text-[var(--text-primary)]">
             {dataStatus.latest_acquisition_utc}
           </div>
-          <p className="text-[11px] text-[var(--text-secondary)]">
-            Newest satellite overpass timestamp represented in the loaded observation records.
-          </p>
         </div>
 
-        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1">
-          <div className="text-[11px] font-medium text-[var(--text-muted)]">
-            02. Retrieved At
+        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1.5">
+          <div className="flex items-center justify-between gap-2 text-[11px] font-medium text-[var(--text-muted)]">
+            <span>02. Retrieved At</span>
+            <InfoPopover title="Retrieved At" align="right">
+              When FireScope last fetched and verified the NASA FIRMS source snapshot.
+            </InfoPopover>
           </div>
           <div className="text-[14px] font-mono font-semibold text-[var(--text-primary)]">
             {dataStatus.retrieved_at_utc}
           </div>
-          <p className="text-[11px] text-[var(--text-secondary)]">
-            When FireScope last fetched and verified the NASA FIRMS source snapshot.
-          </p>
         </div>
 
-        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1">
-          <div className="text-[11px] font-medium text-[var(--text-muted)]">
-            03. Processing Lifecycle
+        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1.5">
+          <div className="flex items-center justify-between gap-2 text-[11px] font-medium text-[var(--text-muted)]">
+            <span>03. Processing Lifecycle</span>
+            <InfoPopover title="Processing Lifecycle" align="right">
+              Standard science-quality records supersede NRT records without double counting.
+            </InfoPopover>
           </div>
           <div className="text-[14px] font-mono font-semibold text-[var(--text-primary)]">
             STANDARD + NRT (~{dataStatus.firms_area_api_constraints.nrt_to_standard_lag_months}mo lag)
           </div>
-          <p className="text-[11px] text-[var(--text-secondary)]">
-            Standard science-quality records supersede NRT records without double counting.
-          </p>
         </div>
 
-        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1">
-          <div className="text-[11px] font-medium text-[var(--text-muted)]">
-            04. Platform Continuity
+        <div className="p-3.5 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-1.5">
+          <div className="flex items-center justify-between gap-2 text-[11px] font-medium text-[var(--text-muted)]">
+            <span>04. Platform Continuity</span>
+            <InfoPopover title="Platform Continuity" align="right">
+              VIIRS S-NPP archive listed through 2026-11-02; Terra, Aqua, NOAA-20 &amp; NOAA-21 active.
+            </InfoPopover>
           </div>
           <div className="text-[14px] font-mono font-semibold text-[var(--warning)]">
             4 Active · 1 Historical Gap
           </div>
-          <p className="text-[11px] text-[var(--text-secondary)]">
-            VIIRS S-NPP archive listed through 2026-11-02; Terra, Aqua, NOAA-20 &amp; NOAA-21 active.
-          </p>
         </div>
       </div>
 
@@ -136,8 +128,8 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
                       <span
                         className={`w-2.5 h-2.5 inline-block ${
                           p.sensor === 'MODIS'
-                            ? 'bg-[#FFB454] rounded-[1px]'
-                            : 'bg-[#61BDE0] rounded-full'
+                            ? 'bg-[var(--modis-fill)] rounded-[1px]'
+                            : 'bg-[var(--viirs-fill)] rounded-full'
                         }`}
                       />
                       {p.display_name}
@@ -174,17 +166,17 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
         </div>
       </section>
 
-      {/* Historical Parquet Archive Manifest (2001–2026, 8.91M+ Official NASA FIRMS Records) */}
+      {/* Historical Archive Manifest (2001–2026, Official NASA FIRMS Records) */}
       {dataStatus.parquet_archive?.available && (
         <section
-          aria-label="NASA FIRMS Historical Parquet Archive"
+          aria-label="NASA FIRMS Historical Archive"
           data-testid="parquet-archive-section"
           className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-3"
         >
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
-                NASA FIRMS Historical Archive Engine (ZSTD Parquet · DuckDB)
+                NASA FIRMS Historical Archive (2001–2026)
               </h2>
               <p className="text-[12px] text-[var(--text-secondary)]">
                 Region: <strong className="text-[var(--text-primary)]">{dataStatus.parquet_archive.region_label}</strong> ·{' '}
@@ -197,7 +189,7 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
                 {dataStatus.parquet_archive.canonical_rows_total.toLocaleString()} Canonical Rows
               </span>
               <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
-                daily_aggregates.parquet ({(dataStatus.parquet_archive.daily_aggregates_parquet.bytes / (1024 * 1024)).toFixed(1)} MB)
+                Daily Archive Dataset ({(dataStatus.parquet_archive.daily_aggregates_parquet.bytes / (1024 * 1024)).toFixed(1)} MB)
               </span>
             </div>
           </div>
@@ -236,60 +228,66 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
           and SHA-256 digests for full audit traceability.
         </p>
 
-        <div className="overflow-x-auto rounded-[6px] border border-[var(--border-subtle)]">
-          <table className="w-full text-left border-collapse text-[12px]">
-            <thead>
-              <tr className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">
-                <th className="py-2 px-3">Filename</th>
-                <th className="py-2 px-3">Product / Collection</th>
-                <th className="py-2 px-3">Platform</th>
-                <th className="py-2 px-3">Processing</th>
-                <th className="py-2 px-3 text-right">Records</th>
-                <th className="py-2 px-3">SHA-256 Checksum</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border-subtle)] font-mono text-[11px]">
-              {(dataStatus.parquet_archive?.source_files ?? []).map((sf) => (
-                <tr key={sf.file_id} className="hover:bg-[var(--surface-2)]/60 bg-[var(--app-bg)]/40">
-                  <td className="py-2 px-3 text-[var(--text-primary)]">
-                    {sf.zip_filename} → {sf.filename}
-                  </td>
-                  <td className="py-2 px-3 text-[var(--text-secondary)]">
-                    {sf.source_product} ({sf.collection})
-                  </td>
-                  <td className="py-2 px-3 text-[var(--text-primary)]">{sf.platforms.join(', ')}</td>
-                  <td className="py-2 px-3 text-[var(--text-secondary)]">
-                    {sf.processing_status}
-                  </td>
-                  <td className="py-2 px-3 text-right text-[var(--success)] font-semibold tabular-nums">
-                    {sf.row_count.toLocaleString()}
-                  </td>
-                  <td className="py-2 px-3 text-[var(--text-muted)]">
-                    {sf.sha256_checksum.slice(0, 24)}…
-                  </td>
+        <DisclosureAccordion
+          title="Raw Archive Files & SHA-256 Checksums"
+          summaryBadge="Audit manifest"
+          defaultOpen={false}
+        >
+          <div className="overflow-x-auto rounded-[6px] border border-[var(--border-subtle)]">
+            <table className="w-full text-left border-collapse text-[12px]">
+              <thead>
+                <tr className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">
+                  <th className="py-2 px-3">Filename</th>
+                  <th className="py-2 px-3">Product / Collection</th>
+                  <th className="py-2 px-3">Platform</th>
+                  <th className="py-2 px-3">Processing</th>
+                  <th className="py-2 px-3 text-right">Records</th>
+                  <th className="py-2 px-3">SHA-256 Checksum</th>
                 </tr>
-              ))}
-              {dataStatus.raw_archive_manifest.map((m) => (
-                <tr key={m.file_id} className="hover:bg-[var(--surface-2)]/60">
-                  <td className="py-2 px-3 text-[var(--text-primary)]">{m.filename}</td>
-                  <td className="py-2 px-3 text-[var(--text-secondary)]">
-                    {m.source_product} ({m.collection})
-                  </td>
-                  <td className="py-2 px-3 text-[var(--text-primary)]">{m.platform}</td>
-                  <td className="py-2 px-3 text-[var(--text-secondary)]">
-                    {m.processing_status}
-                  </td>
-                  <td className="py-2 px-3 text-right text-[var(--text-primary)] tabular-nums">
-                    {m.row_count}
-                  </td>
-                  <td className="py-2 px-3 text-[var(--text-muted)]">
-                    {m.sha256_checksum.slice(0, 24)}…
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)] font-mono text-[11px]">
+                {(dataStatus.parquet_archive?.source_files ?? []).map((sf) => (
+                  <tr key={sf.file_id} className="hover:bg-[var(--surface-2)]/60 bg-[var(--app-bg)]/40">
+                    <td className="py-2 px-3 text-[var(--text-primary)]">
+                      {sf.zip_filename} → {sf.filename}
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-secondary)]">
+                      {sf.source_product} ({sf.collection})
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-primary)]">{sf.platforms.join(', ')}</td>
+                    <td className="py-2 px-3 text-[var(--text-secondary)]">
+                      {sf.processing_status}
+                    </td>
+                    <td className="py-2 px-3 text-right text-[var(--success)] font-semibold tabular-nums">
+                      {sf.row_count.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-muted)]">
+                      {sf.sha256_checksum.slice(0, 24)}…
+                    </td>
+                  </tr>
+                ))}
+                {dataStatus.raw_archive_manifest.map((m) => (
+                  <tr key={m.file_id} className="hover:bg-[var(--surface-2)]/60">
+                    <td className="py-2 px-3 text-[var(--text-primary)]">{m.filename}</td>
+                    <td className="py-2 px-3 text-[var(--text-secondary)]">
+                      {m.source_product} ({m.collection})
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-primary)]">{m.platform}</td>
+                    <td className="py-2 px-3 text-[var(--text-secondary)]">
+                      {m.processing_status}
+                    </td>
+                    <td className="py-2 px-3 text-right text-[var(--text-primary)] tabular-nums">
+                      {m.row_count}
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-muted)]">
+                      {m.sha256_checksum.slice(0, 24)}…
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </DisclosureAccordion>
       </section>
     </div>
   );
@@ -363,8 +361,8 @@ export const MethodologyView: React.FC = () => {
             <thead>
               <tr className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">
                 <th className="py-2 px-3">Characteristic</th>
-                <th className="py-2 px-3 text-[#FFB454]">MODIS Collection 6.1</th>
-                <th className="py-2 px-3 text-[#61BDE0]">VIIRS 375 m Collection 2</th>
+                <th className="py-2 px-3 text-[var(--modis)]">MODIS Collection 6.1</th>
+                <th className="py-2 px-3 text-[var(--viirs)]">VIIRS 375 m Collection 2</th>
                 <th className="py-2 px-3">FireScope Harmonization Rule</th>
               </tr>
             </thead>
@@ -430,36 +428,41 @@ export const MethodologyView: React.FC = () => {
       </section>
 
       {/* Core Equations & Guardrails */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="p-4 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-2">
-          <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
-            M1/M2 Bin Aggregation &amp; Lifecycle Supersession
-          </h3>
-          <div className="p-2.5 rounded bg-[var(--app-bg)] font-mono text-[12px] text-[var(--text-primary)]">
-            N_&#123;s,p&#125;(A, t) = Σ_i 1(x_i ∈ A, τ_i ∈ t, s_i = s, p_i = p)
+      <DisclosureAccordion
+        title="Mathematical Formulations & Aggregation Equations"
+        defaultOpen={false}
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-4 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-2">
+            <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
+              M1/M2 Bin Aggregation &amp; Lifecycle Supersession
+            </h3>
+            <div className="p-2.5 rounded bg-[var(--app-bg)] font-mono text-[12px] text-[var(--text-primary)]">
+              N_&#123;s,p&#125;(A, t) = Σ_i 1(x_i ∈ A, τ_i ∈ t, s_i = s, p_i = p)
+            </div>
+            <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
+              Observations are filtered in WGS84 and binned in UTC. Exact ingestion duplicates are
+              removed, and when both NRT and Standard science-quality records exist for the same
+              observation identity, Standard supersedes NRT to prevent double counting.
+            </p>
           </div>
-          <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
-            Observations are filtered in WGS84 and binned in UTC. Exact ingestion duplicates are
-            removed, and when both NRT and Standard science-quality records exist for the same
-            observation identity, Standard supersedes NRT to prevent double counting.
-          </p>
-        </div>
 
-        <div className="p-4 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-2">
-          <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
-            Historical Seasonal Baseline (P1 Robust Anomaly)
-          </h3>
-          <div className="p-2.5 rounded bg-[var(--app-bg)] font-mono text-[12px] text-[var(--text-primary)]">
-            robust_z = (x - median_baseline) / (1.4826 × MAD_baseline)
+          <div className="p-4 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-2">
+            <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
+              Historical Seasonal Baseline (Robust Anomaly)
+            </h3>
+            <div className="p-2.5 rounded bg-[var(--app-bg)] font-mono text-[12px] text-[var(--text-primary)]">
+              robust_z = (x - median_baseline) / (1.4826 × MAD_baseline)
+            </div>
+            <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
+              Compares like-for-like seasonal windows per sensor. When `MAD_baseline = 0`, FireScope
+              uses a non-parametric percentile and delta fallback rather than dividing by zero.
+              Findings are labeled strictly as <em>“Unusual relative to this baseline”</em>, never as
+              fire predictions.
+            </p>
           </div>
-          <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
-            Compares like-for-like seasonal windows per sensor. When `MAD_baseline = 0`, FireScope
-            uses a non-parametric percentile and delta fallback rather than dividing by zero.
-            Findings are labeled strictly as <em>“Unusual relative to this baseline”</em>, never as
-            fire predictions.
-          </p>
         </div>
-      </div>
+      </DisclosureAccordion>
     </div>
   );
 };
@@ -491,7 +494,7 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
             </span>
             <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--viirs)]/45 font-mono text-[11px] font-semibold text-[var(--viirs)]">
               {dataStatus?.parquet_archive?.available
-                ? `PARQUET ARCHIVE (2001–2026 · ${(dataStatus.parquet_archive.canonical_rows_total / 1_000_000).toFixed(2)}M NASA ROWS)`
+                ? `HISTORICAL ARCHIVE (2001–2026 · ${(dataStatus.parquet_archive.canonical_rows_total / 1_000_000).toFixed(2)}M NASA RECORDS)`
                 : 'ARCHIVE BASELINE (2024–2026-11-11)'}
             </span>
           </div>
@@ -499,20 +502,22 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
 
         <p>
           <strong className="text-[var(--text-primary)]">
-            1. Live Official NASA FIRMS Global Active-Fire Data (Tanpa Selisih Titik Api):
+            1. Live NASA FIRMS Active-Fire Streams:
           </strong>{' '}
-          Peta utama FireScope mengambil deteksi titik api satelit langsung dari feed resmi{' '}
+          The global map and recent activity views stream satellite hotspot detections directly from{' '}
           <strong className="text-[var(--text-primary)]">NASA FIRMS EOSDIS Active Fire</strong>{' '}
-          (<em>MODIS C6.1 Terra/Aqua 1 km</em>, <em>VIIRS NOAA-20 C2 375 m</em>, dan{' '}
-          <em>VIIRS NOAA-21 C2 375 m</em> Global 24h CSV + verifikasi SHA-256) dengan koordinat
-          WGS84 EPSG:4326 yang identik dengan NASA FIRMS Global Fire Map (mode{' '}
-          <code className="font-mono text-[11px] text-[var(--text-primary)]">TODAY UTC</code> dan{' '}
-          <code className="font-mono text-[11px] text-[var(--text-primary)]">24HRS LIVE</code>).
-          Sesuai status resmi NASA FIRMS, sensor <strong>VIIRS S-NPP</strong> saat ini berstatus{' '}
+          feeds—covering <em>MODIS Collection 6.1 (Terra &amp; Aqua, 1 km)</em>,{' '}
+          <em>VIIRS Collection 2 (NOAA-20, 375 m)</em>, and{' '}
+          <em>VIIRS Collection 2 (NOAA-21, 375 m)</em> across{' '}
+          <code className="font-mono text-[11px] text-[var(--text-primary)]">TODAY UTC</code> and{' '}
+          <code className="font-mono text-[11px] text-[var(--text-primary)]">24HRS LIVE</code>{' '}
+          windows in WGS84 coordinates with checksum verification. Consistent with official NASA
+          FIRMS platform availability, <strong>VIIRS Suomi-NPP (S-NPP)</strong> carries{' '}
           <code className="font-mono text-[11px] text-[var(--warning)]">
-            NO_RECENT_DATA (hingga 2026-11-02)
+            NO_RECENT_DATA (archive through 2026-11-02)
           </code>
-          .
+          ; historical S-NPP detections remain preserved while live recent feeds come from Terra,
+          Aqua, NOAA-20, and NOAA-21.
         </p>
 
         {dataStatus?.live_firms_feeds && dataStatus.live_firms_feeds.length > 0 && (
@@ -535,18 +540,15 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
 
         <p>
           <strong className="text-[var(--text-primary)]">
-            2. NASA FIRMS Historical Parquet Engine (FR-08) &amp; Demo Baseline Boundary:
+            2. Historical Satellite Archive &amp; Regional Baselines:
           </strong>{' '}
-          Untuk wilayah Indonesia (2001–2026), fitur perbandingan historis{' '}
-          <code className="font-mono text-[11px] text-[var(--text-primary)]">FR-08</code> dan
-          kalender multi-tahun dikueri langsung via DuckDB dari{' '}
-          <code className="font-mono text-[11px] text-[var(--text-primary)]">daily_aggregates.parquet</code>{' '}
-          yang dibangun dari arsip resmi NASA FIRMS (MODIS C6.1, VIIRS S-NPP, NOAA-20, NOAA-21)
-          dengan deduplikasi eksak dan pembatasan tanggal agar tidak terjadi penghitungan ganda
-          dengan feed live 24 jam. Untuk AOI di luar cakupan file Parquet, FireScope secara eksplisit
-          menampilkan label{' '}
-          <code className="font-mono text-[11px] text-[var(--warning)]">DEMO_FIXTURE_BASELINE</code>{' '}
-          dan tidak menyamarkannya sebagai observasi NASA.
+          For verified regional archives spanning 2001–2026 (including Indonesia across MODIS C6.1
+          and VIIRS C2 Suomi-NPP, NOAA-20, and NOAA-21), multi-year calendars and period
+          comparisons query pre-aggregated official NASA FIRMS records with exact deduplication,
+          Standard-superseding-NRT lifecycle rules, and strict date-boundary separation so archive
+          totals are never double-counted with live 24-hour streams. For regions outside the
+          verified archive coverage, FireScope clearly labels its reference fallback baselines and
+          never disguises synthetic or fallback fixtures as live NASA satellite observations.
         </p>
       </div>
 

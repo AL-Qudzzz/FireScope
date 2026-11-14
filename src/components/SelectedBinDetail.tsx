@@ -6,7 +6,6 @@ import {
   ExternalLink,
   FileCode2,
   Flame,
-  Info,
   ShieldCheck,
 } from 'lucide-react';
 import {
@@ -14,12 +13,14 @@ import {
   CalendarBinRecord,
   CanonicalObservation,
 } from '../types/firescope';
+import { InfoPopover } from './ProgressiveDisclosure';
 
 interface SelectedBinDetailProps {
   analytics: CalendarAnalyticsResponse;
   selectedBin: CalendarBinRecord;
   binObservations: CanonicalObservation[];
   totalMatchingObservations?: number;
+  isLoadingObservations?: boolean;
   selectedObservationId: string | null;
   onSelectObservation: (obs: CanonicalObservation) => void;
   onOpenMethodology: () => void;
@@ -31,6 +32,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
   selectedBin,
   binObservations,
   totalMatchingObservations,
+  isLoadingObservations = false,
   selectedObservationId,
   onSelectObservation,
   onOpenMethodology,
@@ -57,41 +59,47 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
     <section
       aria-label="Selected Time-Bin Detail and Provenance"
       data-testid="selected-bin-detail"
-      className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-5"
+      aria-busy={isLoadingObservations}
+      className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md p-4 space-y-5"
     >
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-[var(--border-subtle)]">
-        <div>
-          <div className="flex items-center gap-2">
-            <Flame className="w-4 h-4 text-[var(--ember)]" />
-            <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
-              Selected Time-Bin Detail · {selectedBin.label}
-            </h2>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]">
-              UTC: {selectedBin.time_bin_start_utc.slice(0, 16).replace('T', ' ')} →{' '}
-              {selectedBin.time_bin_end_utc.slice(0, 16).replace('T', ' ')}
-            </span>
-          </div>
-          <p className="text-[12px] text-[var(--text-secondary)] mt-0.5">
-            AOI: <strong className="text-[var(--text-primary)]">{analytics.aoi.name}</strong> (Local
-            reference timezone: {analytics.aoi.timezone}). Active-fire detections represent thermal
-            anomaly pixel records, not confirmed fire incidents.
-          </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Flame className="w-4 h-4 text-[var(--ember)]" />
+          <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
+            Selected Time-Bin Detail · {selectedBin.label}
+          </h2>
+          <span className="text-[11px] font-mono text-[var(--text-muted)]">
+            UTC: {selectedBin.time_bin_start_utc.slice(0, 16).replace('T', ' ')} →{' '}
+            {selectedBin.time_bin_end_utc.slice(0, 16).replace('T', ' ')}
+          </span>
+          <InfoPopover title="About Time-Bin Detections" triggerLabel="What is a detection?">
+            <div className="space-y-1">
+              <p>
+                AOI: <strong className="text-[var(--text-primary)]">{analytics.aoi.name}</strong>{' '}
+                (local reference timezone: {analytics.aoi.timezone}).
+              </p>
+              <p>
+                Active-fire detections represent thermal anomaly pixel records at satellite overpass
+                time—not confirmed fire incidents, perimeters, or burned-area measurements.
+              </p>
+            </div>
+          </InfoPopover>
         </div>
 
         <div className="flex items-center gap-2 text-[12px]">
           <button
             type="button"
             onClick={onOpenMethodology}
-            className="px-2.5 py-1 rounded-[6px] bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center gap-1.5"
+            className="px-2.5 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center gap-1.5 transition-colors"
           >
-            <span>Method {analytics.method.id}</span>
+            <span>Methodology</span>
             <ExternalLink className="w-3 h-3 text-[var(--text-muted)]" />
           </button>
           <button
             type="button"
             onClick={onOpenDataSources}
-            className="px-2.5 py-1 rounded-[6px] bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center gap-1.5"
+            className="px-2.5 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center gap-1.5 transition-colors"
           >
             <Database className="w-3.5 h-3.5 text-[var(--viirs)]" />
             <span>Provenance &amp; Status</span>
@@ -99,223 +107,305 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
         </div>
       </div>
 
-      {/* 3-Column Sensor, FRP, Confidence & Seasonal Baseline Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Flat 3-Column Field Atlas Specification Grid (1px Hairlines, No Nested Card-in-Card) */}
+      <div className="rounded border border-[var(--border-subtle)] bg-[var(--surface-2)]/30 grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-[var(--border-subtle)]">
         {/* Column 1: Sensor & Platform Split + Native Confidence */}
-        <div className="p-3.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-3">
-          <div className="text-[13px] font-semibold text-[var(--text-primary)]">
-            Sensor &amp; Platform Composition
+        <div className="p-4 flex flex-col justify-between gap-3">
+          <div className="space-y-3">
+            <div className="text-[13px] font-semibold text-[var(--text-primary)]">
+              Sensor &amp; Platform Composition
+            </div>
+
+            {/* MODIS */}
+            <div className="space-y-1 pb-3 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center justify-between text-[12px]">
+                <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
+                  <span className="w-2.5 h-2.5 bg-[var(--modis-fill)] inline-block rounded-[1px]" />
+                  MODIS Detections (1 km C6.1)
+                </span>
+                <span className="font-mono font-semibold text-[var(--modis)] tabular-nums">
+                  {selectedBin.values.MODIS !== null
+                    ? selectedBin.values.MODIS.toLocaleString()
+                    : 'No data'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[11px] font-mono text-[var(--text-secondary)]">
+                <span>Terra: {selectedBin.platform_breakdown.TERRA.toLocaleString()}</span>
+                <span>Aqua: {selectedBin.platform_breakdown.AQUA.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* VIIRS */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[12px]">
+                <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
+                  <span className="w-2.5 h-2.5 bg-[var(--viirs-fill)] inline-block rounded-full" />
+                  VIIRS Detections (375 m C2)
+                </span>
+                <span className="font-mono font-semibold text-[var(--viirs)] tabular-nums">
+                  {selectedBin.values.VIIRS !== null
+                    ? selectedBin.values.VIIRS.toLocaleString()
+                    : 'No data'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[11px] font-mono text-[var(--text-secondary)]">
+                <span>S-NPP: {selectedBin.platform_breakdown.SNPP.toLocaleString()}</span>
+                <span>NOAA-20: {selectedBin.platform_breakdown.NOAA20.toLocaleString()}</span>
+                <span>NOAA-21: {selectedBin.platform_breakdown.NOAA21.toLocaleString()}</span>
+              </div>
+            </div>
           </div>
 
-          {/* MODIS */}
-          <div className="space-y-1 pb-2.5 border-b border-[var(--border-subtle)]">
-            <div className="flex items-center justify-between text-[12px]">
-              <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
-                <span className="w-2.5 h-2.5 bg-[#FFB454] inline-block rounded-[1px]" />
-                MODIS Detections (1 km C6.1)
-              </span>
-              <span className="font-mono font-semibold text-[#FFB454] tabular-nums">
-                {selectedBin.values.MODIS !== null
-                  ? selectedBin.values.MODIS.toLocaleString()
-                  : 'No data'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-[11px] font-mono text-[var(--text-secondary)]">
-              <span>Terra: {selectedBin.platform_breakdown.TERRA}</span>
-              <span>Aqua: {selectedBin.platform_breakdown.AQUA}</span>
-            </div>
-            <div className="text-[11px] font-mono text-[var(--text-muted)]">
-              Native confidence (0–100): Low (0–29):{' '}
-              {selectedBin.confidence_breakdown.MODIS_numeric_bins.low_0_29} · Nom (30–79):{' '}
-              {selectedBin.confidence_breakdown.MODIS_numeric_bins.nominal_30_79} · High (80–100):{' '}
-              {selectedBin.confidence_breakdown.MODIS_numeric_bins.high_80_100}
-            </div>
-          </div>
-
-          {/* VIIRS */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[12px]">
-              <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
-                <span className="w-2.5 h-2.5 bg-[#61BDE0] inline-block rounded-full" />
-                VIIRS Detections (375 m C2)
-              </span>
-              <span className="font-mono font-semibold text-[#61BDE0] tabular-nums">
-                {selectedBin.values.VIIRS !== null
-                  ? selectedBin.values.VIIRS.toLocaleString()
-                  : 'No data'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-[11px] font-mono text-[var(--text-secondary)]">
-              <span>S-NPP: {selectedBin.platform_breakdown.SNPP}</span>
-              <span>NOAA-20: {selectedBin.platform_breakdown.NOAA20}</span>
-              <span>NOAA-21: {selectedBin.platform_breakdown.NOAA21}</span>
-            </div>
-            <div className="text-[11px] font-mono text-[var(--text-muted)]">
-              Native C2 categorical: low: {selectedBin.confidence_breakdown.VIIRS_categorical.low} ·
-              nominal: {selectedBin.confidence_breakdown.VIIRS_categorical.nominal} · high:{' '}
-              {selectedBin.confidence_breakdown.VIIRS_categorical.high}
-            </div>
+          <div className="pt-2 border-t border-[var(--border-subtle)]">
+            <InfoPopover
+              title="Native Sensor Confidence Breakdown"
+              triggerLabel="Confidence breakdown"
+            >
+              <div className="space-y-1.5">
+                <p>
+                  MODIS numeric confidence (0–100) and VIIRS Collection 2 categorical confidence
+                  are preserved natively and are not equivalent across sensors.
+                </p>
+                <div className="font-mono text-[10px] text-[var(--text-primary)]">
+                  <span className="text-[var(--modis)] font-semibold">MODIS (0–100):</span> Low
+                  (0–29): {selectedBin.confidence_breakdown.MODIS_numeric_bins.low_0_29} · Nom
+                  (30–79): {selectedBin.confidence_breakdown.MODIS_numeric_bins.nominal_30_79} ·
+                  High (80–100): {selectedBin.confidence_breakdown.MODIS_numeric_bins.high_80_100}
+                </div>
+                <div className="font-mono text-[10px] text-[var(--text-primary)]">
+                  <span className="text-[var(--viirs)] font-semibold">VIIRS C2 cat:</span> low:{' '}
+                  {selectedBin.confidence_breakdown.VIIRS_categorical.low} · nominal:{' '}
+                  {selectedBin.confidence_breakdown.VIIRS_categorical.nominal} · high:{' '}
+                  {selectedBin.confidence_breakdown.VIIRS_categorical.high}
+                </div>
+              </div>
+            </InfoPopover>
           </div>
         </div>
 
-        {/* Column 2: Observed FRP Summary (MW) — Separate per Sensor */}
-        <div className="p-3.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px] font-semibold text-[var(--text-primary)]">
-              Observed FRP Summary · MW
-            </span>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]">
-              Pixel-integrated power
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2.5 text-[11px] font-mono tabular-nums">
-            <div className="p-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] space-y-1">
-              <div className="text-[#FFB454] font-semibold">MODIS FRP (MW)</div>
-              <div>Sum: {modisFrp.sum_mw !== null ? `${modisFrp.sum_mw} MW` : 'N/A'}</div>
-              <div>Mean: {modisFrp.mean_mw !== null ? `${modisFrp.mean_mw} MW` : 'N/A'}</div>
-              <div>
-                Median:{' '}
-                {modisFrp.median_mw !== null
-                  ? `${modisFrp.median_mw} MW`
-                  : modisFrp.valid_count > 0
-                  ? 'N/A (daily agg)'
-                  : 'N/A'}
-              </div>
-              <div>
-                P90:{' '}
-                {modisFrp.p90_mw !== null
-                  ? `${modisFrp.p90_mw} MW`
-                  : modisFrp.valid_count > 0
-                  ? 'N/A (daily agg)'
-                  : 'N/A'}
-              </div>
-              {modisFrp.max_mw !== null && modisFrp.max_mw !== undefined && (
-                <div>Max: {modisFrp.max_mw} MW</div>
-              )}
-              <div className="text-[10px] text-[var(--text-muted)] pt-1 border-t border-[var(--border-subtle)]">
-                Valid: {modisFrp.valid_count} · Null: {modisFrp.null_count}
-              </div>
+        {/* Column 2: Observed FRP Summary (MW) — Side-by-Side Hairline Ledger */}
+        <div className="p-4 flex flex-col justify-between gap-3">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold text-[var(--text-primary)]">
+                Observed FRP Summary · MW
+              </span>
+              <span className="text-[11px] font-mono text-[var(--text-muted)]">
+                Pixel-integrated
+              </span>
             </div>
 
-            <div className="p-2 rounded bg-[var(--app-bg)] border border-[var(--border-subtle)] space-y-1">
-              <div className="text-[#61BDE0] font-semibold">VIIRS FRP (MW)</div>
-              <div>Sum: {viirsFrp.sum_mw !== null ? `${viirsFrp.sum_mw} MW` : 'N/A'}</div>
-              <div>Mean: {viirsFrp.mean_mw !== null ? `${viirsFrp.mean_mw} MW` : 'N/A'}</div>
-              <div>
-                Median:{' '}
-                {viirsFrp.median_mw !== null
-                  ? `${viirsFrp.median_mw} MW`
-                  : viirsFrp.valid_count > 0
-                  ? 'N/A (daily agg)'
-                  : 'N/A'}
+            <div className="grid grid-cols-2 divide-x divide-[var(--border-subtle)] text-[11px] font-mono tabular-nums">
+              <div className="pr-3 space-y-1 text-[var(--text-secondary)]">
+                <div className="text-[var(--modis)] font-semibold pb-0.5">MODIS FRP</div>
+                <div>
+                  Sum:{' '}
+                  <strong className="text-[var(--text-primary)]">
+                    {modisFrp.sum_mw !== null ? `${modisFrp.sum_mw} MW` : 'N/A'}
+                  </strong>
+                </div>
+                <div>
+                  Mean:{' '}
+                  <strong className="text-[var(--text-primary)]">
+                    {modisFrp.mean_mw !== null ? `${modisFrp.mean_mw} MW` : 'N/A'}
+                  </strong>
+                </div>
               </div>
-              <div>
-                P90:{' '}
-                {viirsFrp.p90_mw !== null
-                  ? `${viirsFrp.p90_mw} MW`
-                  : viirsFrp.valid_count > 0
-                  ? 'N/A (daily agg)'
-                  : 'N/A'}
-              </div>
-              {viirsFrp.max_mw !== null && viirsFrp.max_mw !== undefined && (
-                <div>Max: {viirsFrp.max_mw} MW</div>
-              )}
-              <div className="text-[10px] text-[var(--text-muted)] pt-1 border-t border-[var(--border-subtle)]">
-                Valid: {viirsFrp.valid_count} · Null: {viirsFrp.null_count}
+
+              <div className="pl-3 space-y-1 text-[var(--text-secondary)]">
+                <div className="text-[var(--viirs)] font-semibold pb-0.5">VIIRS FRP</div>
+                <div>
+                  Sum:{' '}
+                  <strong className="text-[var(--text-primary)]">
+                    {viirsFrp.sum_mw !== null ? `${viirsFrp.sum_mw} MW` : 'N/A'}
+                  </strong>
+                </div>
+                <div>
+                  Mean:{' '}
+                  <strong className="text-[var(--text-primary)]">
+                    {viirsFrp.mean_mw !== null ? `${viirsFrp.mean_mw} MW` : 'N/A'}
+                  </strong>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="text-[11px] text-[var(--text-muted)] leading-snug">
-            FRP is instantaneous radiative power in Megawatts (MW) at satellite overpass—never
-            burned area or total fire perimeter.
+          <div className="pt-2 border-t border-[var(--border-subtle)]">
+            <InfoPopover title="Detailed FRP Statistics (MW)" triggerLabel="More FRP stats">
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3 font-mono text-[10px] text-[var(--text-primary)]">
+                  <div className="space-y-0.5">
+                    <div className="text-[var(--modis)] font-semibold">MODIS</div>
+                    <div>
+                      Median:{' '}
+                      {modisFrp.median_mw !== null
+                        ? `${modisFrp.median_mw} MW`
+                        : modisFrp.valid_count > 0
+                        ? 'N/A (daily agg)'
+                        : 'N/A'}
+                    </div>
+                    <div>
+                      P90:{' '}
+                      {modisFrp.p90_mw !== null
+                        ? `${modisFrp.p90_mw} MW`
+                        : modisFrp.valid_count > 0
+                        ? 'N/A (daily agg)'
+                        : 'N/A'}
+                    </div>
+                    {modisFrp.max_mw !== null && modisFrp.max_mw !== undefined && (
+                      <div>Max: {modisFrp.max_mw} MW</div>
+                    )}
+                    <div className="text-[var(--text-muted)]">
+                      Valid: {modisFrp.valid_count.toLocaleString()} · Null: {modisFrp.null_count}
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="text-[var(--viirs)] font-semibold">VIIRS</div>
+                    <div>
+                      Median:{' '}
+                      {viirsFrp.median_mw !== null
+                        ? `${viirsFrp.median_mw} MW`
+                        : viirsFrp.valid_count > 0
+                        ? 'N/A (daily agg)'
+                        : 'N/A'}
+                    </div>
+                    <div>
+                      P90:{' '}
+                      {viirsFrp.p90_mw !== null
+                        ? `${viirsFrp.p90_mw} MW`
+                        : viirsFrp.valid_count > 0
+                        ? 'N/A (daily agg)'
+                        : 'N/A'}
+                    </div>
+                    {viirsFrp.max_mw !== null && viirsFrp.max_mw !== undefined && (
+                      <div>Max: {viirsFrp.max_mw} MW</div>
+                    )}
+                    <div className="text-[var(--text-muted)]">
+                      Valid: {viirsFrp.valid_count.toLocaleString()} · Null: {viirsFrp.null_count}
+                    </div>
+                  </div>
+                </div>
+                <p className="pt-1.5 border-t border-[var(--border-subtle)] text-[var(--text-secondary)]">
+                  FRP is instantaneous radiative power (MW) at satellite overpass—never burned area
+                  or fire perimeter.
+                </p>
+              </div>
+            </InfoPopover>
           </div>
         </div>
 
-        {/* Column 3: Processing Lifecycle & P1 Seasonal Baseline Comparison */}
-        <div className="p-3.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px] font-semibold text-[var(--text-primary)]">
-              Provenance &amp; Seasonal Baseline
-            </span>
-            <ShieldCheck className="w-4 h-4 text-[var(--success)]" />
-          </div>
+        {/* Column 3: Processing Lifecycle & Seasonal Baseline */}
+        <div className="p-4 flex flex-col justify-between gap-3">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[13px] font-semibold text-[var(--text-primary)]">
+                Provenance &amp; Seasonal Baseline
+              </span>
+              <ShieldCheck className="w-4 h-4 text-[var(--success)]" />
+            </div>
 
-          <div className="space-y-1 text-[11px] font-mono text-[var(--text-secondary)] pb-2.5 border-b border-[var(--border-subtle)]">
-            <div>
-              Processing State: STANDARD ({selectedBin.processing_breakdown.STANDARD}) · NRT (
+            <div className="text-[11px] font-mono text-[var(--text-secondary)] pb-3 border-b border-[var(--border-subtle)]">
+              Processing: STANDARD ({selectedBin.processing_breakdown.STANDARD}) · NRT (
               {selectedBin.processing_breakdown.NRT})
             </div>
-            <div>
-              QA Supersession: {selectedBin.quality.superseded_nrt_count} NRT record(s) superseded
-              by Standard science-quality records
-            </div>
-            <div>
-              Retrieved at: {analytics.provenance.retrieved_at_utc}
-            </div>
+
+            {selectedBin.seasonal_baseline &&
+              (() => {
+                const modisYears = selectedBin.seasonal_baseline.MODIS.baseline_years;
+                const viirsYears = selectedBin.seasonal_baseline.VIIRS.baseline_years;
+                const allYears = Array.from(new Set([...modisYears, ...viirsYears]));
+                const heading =
+                  allYears.length > 0
+                    ? `Seasonal Baseline (${Math.min(...allYears)}–${Math.max(...allYears)}, ${allYears.length} yr)`
+                    : 'Seasonal Baseline';
+                return (
+                  <div className="space-y-1.5 text-[11px]">
+                    <div className="font-medium text-[var(--text-primary)]">{heading}</div>
+                    <div className="font-mono text-[var(--text-secondary)]">
+                      MODIS: {selectedBin.seasonal_baseline.MODIS.status_label}
+                    </div>
+                    <div className="font-mono text-[var(--text-secondary)]">
+                      VIIRS: {selectedBin.seasonal_baseline.VIIRS.status_label}
+                    </div>
+                  </div>
+                );
+              })()}
           </div>
 
-          {selectedBin.seasonal_baseline &&
-            (() => {
-              const modisYears = selectedBin.seasonal_baseline.MODIS.baseline_years;
-              const viirsYears = selectedBin.seasonal_baseline.VIIRS.baseline_years;
-              const allYears = Array.from(new Set([...modisYears, ...viirsYears]));
-              const heading =
-                allYears.length > 0
-                  ? `Historical Baseline (${Math.min(...allYears)}–${Math.max(...allYears)}, ${allYears.length} yr)`
-                  : 'Within-Window / Baseline Status';
-              const formatSensorBaseline = (
-                label: string,
-                stat: NonNullable<CalendarBinRecord['seasonal_baseline']>['MODIS']
-              ) => {
-                if (
-                  stat.baseline_years.length === 0 ||
-                  stat.status_label === 'Baseline unavailable (insufficient history)'
-                ) {
-                  return `${label}: ${stat.status_label}`;
-                }
-                return `${label}: ${stat.status_label} (median ${stat.baseline_median}, MAD ${stat.baseline_mad}${
-                  stat.robust_z !== null ? `, z*=${stat.robust_z}` : ', MAD=0 fallback'
-                })`;
-              };
-              const caveatText =
-                selectedBin.seasonal_baseline.VIIRS.caveat_note ||
-                selectedBin.seasonal_baseline.MODIS.caveat_note;
-              return (
-                <div className="space-y-1.5 text-[11px]">
-                  <div className="font-medium text-[var(--text-primary)]">{heading}</div>
-                  <div className="font-mono text-[var(--text-secondary)]">
-                    {formatSensorBaseline('MODIS', selectedBin.seasonal_baseline.MODIS)}
+          <div className="pt-2 border-t border-[var(--border-subtle)] flex justify-end">
+            <InfoPopover
+              title="Provenance & Baseline Formula"
+              triggerLabel="Baseline & QA details"
+              align="right"
+            >
+              <div className="space-y-1.5">
+                <div className="font-mono text-[10px] space-y-1 text-[var(--text-primary)]">
+                  <div>
+                    QA Supersession: {selectedBin.quality.superseded_nrt_count} NRT record(s)
+                    superseded by Standard science-quality records
                   </div>
-                  <div className="font-mono text-[var(--text-secondary)]">
-                    {formatSensorBaseline('VIIRS', selectedBin.seasonal_baseline.VIIRS)}
-                  </div>
-                  {caveatText && (
-                    <div className="text-[10px] text-[var(--text-muted)] leading-snug">
-                      {caveatText}
-                    </div>
-                  )}
+                  <div>Retrieved at: {analytics.provenance.retrieved_at_utc}</div>
                 </div>
-              );
-            })()}
+                {selectedBin.seasonal_baseline &&
+                  (() => {
+                    const formatDetail = (
+                      label: string,
+                      stat: NonNullable<CalendarBinRecord['seasonal_baseline']>['MODIS']
+                    ) => {
+                      if (
+                        stat.baseline_years.length === 0 ||
+                        stat.status_label === 'Baseline unavailable (insufficient history)'
+                      ) {
+                        return `${label}: ${stat.status_label}`;
+                      }
+                      return `${label}: median ${stat.baseline_median}, MAD ${stat.baseline_mad}${
+                        stat.robust_z !== null ? `, z*=${stat.robust_z}` : ', MAD=0 fallback'
+                      }`;
+                    };
+                    const caveatText =
+                      selectedBin.seasonal_baseline.VIIRS.caveat_note ||
+                      selectedBin.seasonal_baseline.MODIS.caveat_note;
+                    const formulaText =
+                      selectedBin.seasonal_baseline.VIIRS.method_formula ||
+                      selectedBin.seasonal_baseline.MODIS.method_formula;
+                    return (
+                      <div className="pt-1.5 border-t border-[var(--border-subtle)] space-y-1">
+                        <div className="font-mono text-[10px] text-[var(--text-primary)]">
+                          {formatDetail('MODIS', selectedBin.seasonal_baseline.MODIS)}
+                        </div>
+                        <div className="font-mono text-[10px] text-[var(--text-primary)]">
+                          {formatDetail('VIIRS', selectedBin.seasonal_baseline.VIIRS)}
+                        </div>
+                        {formulaText && (
+                          <div className="font-mono text-[10px] text-[var(--text-muted)]">
+                            {formulaText}
+                          </div>
+                        )}
+                        {caveatText && (
+                          <p className="text-[10px] text-[var(--text-secondary)] leading-snug">
+                            {caveatText}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
+              </div>
+            </InfoPopover>
+          </div>
         </div>
       </div>
 
-      {/* Bounded Paginated Canonical Observations Table (M0_RAW) */}
+      {/* Bounded Paginated Observation Records Table */}
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <FileCode2 className="w-4 h-4 text-[var(--viirs)]" />
             <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
               {totalMatchingObservations !== undefined &&
               totalMatchingObservations > binObservations.length
-                ? `Canonical Hotspot Observation Records (Showing ${binObservations.length.toLocaleString()} of ${totalMatchingObservations.toLocaleString()})`
-                : `Canonical Hotspot Observation Records in Bin (${binObservations.length.toLocaleString()})`}
+                ? `Observation Records in Selected Time Bin (${binObservations.length.toLocaleString()} of ${totalMatchingObservations.toLocaleString()})`
+                : `Observation Records in Selected Time Bin (${binObservations.length.toLocaleString()})`}
             </h3>
-            <span className="text-[11px] text-[var(--text-muted)]">
-              Click any row to open full M0_RAW Observation Inspector
-            </span>
           </div>
 
           {binObservations.length > pageSize && (
@@ -325,7 +415,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                 disabled={safePage === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 aria-label="Previous observation page"
-                className="px-2 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] disabled:opacity-40 text-[var(--text-primary)] flex items-center gap-1"
+                className="px-2.5 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] disabled:opacity-40 border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center gap-1"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
                 <span>Prev</span>
@@ -338,7 +428,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                 disabled={safePage >= totalPages - 1}
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 aria-label="Next observation page"
-                className="px-2 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] disabled:opacity-40 text-[var(--text-primary)] flex items-center gap-1"
+                className="px-2.5 py-1 rounded bg-[var(--surface-2)] hover:bg-[var(--surface-3)] disabled:opacity-40 border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center gap-1"
               >
                 <span>Next</span>
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -347,11 +437,17 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
           )}
         </div>
 
-        {binObservations.length === 0 ? (
-          <div className="p-6 rounded-[6px] bg-[var(--app-bg)] border border-[var(--border-subtle)] text-center space-y-1">
+        {isLoadingObservations ? (
+          <div className="rounded border border-[var(--border-subtle)] p-3 space-y-2">
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <div key={idx} className="h-7 w-full rounded atlas-skeleton" />
+            ))}
+          </div>
+        ) : binObservations.length === 0 ? (
+          <div className="p-6 rounded bg-[var(--surface-2)]/50 border border-[var(--border-subtle)] text-center space-y-1">
             <div className="text-[13px] font-medium text-[var(--text-primary)]">
               {selectedBin.coverage_state === 'NO_SOURCE_DATA'
-                ? 'No source data available for this period/platform selection'
+                ? 'No source records available for this time period and platform filter'
                 : 'No detections in available records for this time bin'}
             </div>
             <div className="text-[12px] text-[var(--text-secondary)]">
@@ -359,7 +455,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-[6px] border border-[var(--border-subtle)]">
+          <div className="overflow-x-auto rounded border border-[var(--border-subtle)]">
             <table className="w-full text-left border-collapse text-[12px]">
               <thead>
                 <tr className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)] font-medium">
@@ -383,7 +479,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                       className={`cursor-pointer transition-colors ${
                         isSelected
                           ? 'bg-[var(--surface-3)] text-[var(--text-primary)]'
-                          : 'bg-[var(--app-bg)]/60 hover:bg-[var(--surface-2)] text-[var(--text-secondary)]'
+                          : 'bg-[var(--surface-1)] hover:bg-[var(--surface-2)]/70 text-[var(--text-secondary)]'
                       }`}
                     >
                       <td className="py-2 px-3 font-medium text-[var(--text-primary)]">
@@ -393,8 +489,8 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                         <span
                           className={
                             obs.sensor === 'MODIS'
-                              ? 'text-[#FFB454] font-semibold'
-                              : 'text-[#61BDE0] font-semibold'
+                              ? 'text-[var(--modis)] font-semibold'
+                              : 'text-[var(--viirs)] font-semibold'
                           }
                         >
                           {obs.sensor}

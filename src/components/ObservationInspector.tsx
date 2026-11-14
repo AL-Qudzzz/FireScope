@@ -1,13 +1,7 @@
 import React from 'react';
-import {
-  CheckCircle2,
-  Crosshair,
-  Database,
-  Flame,
-  ShieldAlert,
-  X,
-} from 'lucide-react';
+import { X } from 'lucide-react';
 import { CanonicalObservation } from '../types/firescope';
+import { DisclosureAccordion, InfoPopover } from './ProgressiveDisclosure';
 
 interface ObservationInspectorProps {
   observation: CanonicalObservation | null;
@@ -37,19 +31,32 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
         <div className="p-4 space-y-4">
           {/* Header */}
           <div className="flex items-start justify-between gap-2 pb-3 border-b border-[var(--border-subtle)]">
-            <div>
+            <div className="space-y-1.5 min-w-0">
               <div className="flex items-center gap-2">
                 <span
-                  className={`w-3 h-3 inline-block ${
-                    isModis ? 'bg-[#FFB454] rounded-[1px]' : 'bg-[#61BDE0] rounded-full'
+                  className={`w-3 h-3 inline-block shrink-0 ${
+                    isModis
+                      ? 'bg-[var(--modis-fill)] rounded-[1px]'
+                      : 'bg-[var(--viirs-fill)] rounded-full'
                   }`}
                 />
                 <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
                   Hotspot Observation Inspector
                 </h2>
               </div>
-              <div className="text-[11px] font-mono text-[var(--text-muted)] mt-0.5 break-all">
+              <div className="text-[11px] font-mono text-[var(--text-muted)] break-all">
                 {observation.observation_id}
+              </div>
+              <div>
+                <InfoPopover
+                  title="What is a Hotspot Detection?"
+                  triggerLabel="What does this point represent?"
+                >
+                  <strong className="text-[var(--text-primary)]">Active-fire detection record:</strong>{' '}
+                  Coordinates represent the associated satellite pixel center ({observation.scan_native ?? '—'}{' '}
+                  km × {observation.track_native ?? '—'} km footprint), not an exact flame ignition point
+                  or confirmed incident perimeter.
+                </InfoPopover>
               </div>
             </div>
             <button
@@ -61,17 +68,6 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
               <X className="w-4 h-4" />
             </button>
           </div>
-
-        {/* Scientific Non-Claim Banner (Section 8) */}
-        <div className="p-2.5 rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] flex items-start gap-2 text-[11px] text-[var(--text-secondary)]">
-          <ShieldAlert className="w-4 h-4 text-[var(--modis)] shrink-0 mt-0.5" />
-          <div>
-            <strong className="text-[var(--text-primary)]">Active-fire detection record:</strong>{' '}
-            Coordinates represent the associated satellite pixel center ({observation.scan_native ?? '—'}{' '}
-            km × {observation.track_native ?? '—'} km footprint), not an exact flame ignition point
-            or confirmed incident perimeter.
-          </div>
-        </div>
 
         {/* Live NASA EONET v3 Event Card (if observation originates from NASA EONET Live API) */}
         {observation.source_product === 'NASA_EONET_V3_LIVE' && (
@@ -114,7 +110,7 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
         {/* Core Canonical Attributes */}
         <div className="space-y-2">
           <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">
-            Canonical Observation Fields (M0_RAW)
+            Observation Details
           </h3>
           <div className="rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] divide-y divide-[var(--border-subtle)] text-[12px]">
             <div className="px-3 py-2 flex items-center justify-between">
@@ -249,28 +245,25 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
         </div>
 
         {/* Product, Processing & Checksum Provenance */}
-        <div className="space-y-2">
-          <h3 className="text-[12px] font-semibold text-[var(--text-primary)]">
-            Source &amp; Processing Provenance
-          </h3>
+        <DisclosureAccordion title="Source File & Checksum Provenance" defaultOpen={false}>
           <div className="rounded-[6px] bg-[var(--surface-2)] border border-[var(--border-subtle)] p-3 space-y-1.5 text-[11px] font-mono">
-            <div className="flex justify-between">
+            <div className="flex justify-between gap-2">
               <span className="text-[var(--text-secondary)]">Source Product:</span>
-              <span className="text-[var(--text-primary)]">{observation.source_product}</span>
+              <span className="text-[var(--text-primary)] text-right">{observation.source_product}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between gap-2">
               <span className="text-[var(--text-secondary)]">Collection:</span>
-              <span className="text-[var(--text-primary)]">{observation.collection}</span>
+              <span className="text-[var(--text-primary)] text-right">{observation.collection}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between gap-2">
               <span className="text-[var(--text-secondary)]">Processing Status:</span>
-              <span className="text-[var(--text-primary)]">
+              <span className="text-[var(--text-primary)] text-right">
                 {observation.processing_status} (version {observation.processing_version})
               </span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between gap-2">
               <span className="text-[var(--text-secondary)]">Retrieved At (UTC):</span>
-              <span className="text-[var(--text-primary)]">
+              <span className="text-[var(--text-primary)] text-right">
                 {observation.source_retrieved_at_utc}
               </span>
             </div>
@@ -281,7 +274,7 @@ export const ObservationInspector: React.FC<ObservationInspectorProps> = ({
               </div>
             </div>
           </div>
-        </div>
+        </DisclosureAccordion>
       </div>
 
       <div className="p-3 border-t border-[var(--border-subtle)] bg-[var(--surface-2)]/40 text-[11px] text-[var(--text-muted)] flex items-center justify-between pb-safe">

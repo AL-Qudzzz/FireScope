@@ -1268,6 +1268,80 @@ test('queryParquetDailyBuckets partitions adjacent 0.25deg cells additively with
   assert.equal(quadSum, wholeTotal, `4 quadrant cells (${quadSum}) must equal whole bbox (${wholeTotal}) without boundary overlap`);
 });
 
+test('aggregateCalendarAnalytics supports dynamic live archiveCoverageEnd and keeps MODIS_detections equal to TERRA + AQUA', () => {
+  const liveTerra = parseModisRecord(
+    {
+      latitude: -2.45,
+      longitude: 114.15,
+      brightness: 329.5,
+      scan: 1.0,
+      track: 1.0,
+      acq_date: '2026-11-14',
+      acq_time: '0320',
+      satellite: 'Terra',
+      confidence: 82,
+      version: '6.1NRT',
+      bright_t31: 294.1,
+      frp: 31.4,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-14T06:00:00Z', checksum: 'chk-live', rowNumber: 1 }
+  );
+  const liveAqua = parseModisRecord(
+    {
+      latitude: -2.55,
+      longitude: 114.25,
+      brightness: 334.0,
+      scan: 1.1,
+      track: 1.0,
+      acq_date: '2026-11-14',
+      acq_time: '0615',
+      satellite: 'Aqua',
+      confidence: 88,
+      version: '6.1NRT',
+      bright_t31: 295.0,
+      frp: 42.6,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-14T06:30:00Z', checksum: 'chk-live', rowNumber: 2 }
+  );
+
+  const dynamicRegistry = TEST_PLATFORM_REGISTRY.map((p) =>
+    p.platform_id === 'SNPP' ? p : { ...p, last_observation_date: '2026-11-14' }
+  );
+
+  const res = aggregateCalendarAnalytics({
+    allRawRecords: [liveTerra, liveAqua],
+    aoi: SAMPLE_AOI,
+    startDate: '2026-11-13',
+    endDate: '2026-11-14',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: dynamicRegistry,
+    archiveCoverageStart: '2024-01-01',
+    archiveCoverageEnd: '2026-11-14',
+    retrievedAtUtc: '2026-11-14T07:00:00Z',
+    latestAcquisitionUtc: '2026-11-14T06:15:00Z',
+    archiveChecksums: ['chk-live'],
+  });
+
+  const nov14 = res.series.find((b) => b.bin_key === '2026-11-14');
+  assert.ok(nov14, 'Expected 2026-11-14 bin');
+  assert.notEqual(nov14.coverage_state, 'NO_SOURCE_DATA');
+  assert.equal(nov14.values.MODIS, 2);
+  assert.equal(res.totals.MODIS_detections, 2);
+  assert.equal(
+    res.totals.MODIS_detections,
+    res.totals.platform_totals.TERRA + res.totals.platform_totals.AQUA
+  );
+  assert.equal(res.totals.MODIS_frp.valid_count, 2);
+  assert.equal(res.totals.MODIS_frp.sum_mw, 74.0);
+});
+
 
 
 

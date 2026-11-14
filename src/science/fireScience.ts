@@ -843,6 +843,8 @@ export function aggregateCalendarAnalytics(params: {
   viirsCategories?: Array<'low' | 'nominal' | 'high'>;
   metric: 'detection_count' | 'frp_mw';
   platformRegistry: PlatformRegistryEntry[];
+  archiveCoverageStart?: string;
+  archiveCoverageEnd?: string;
   retrievedAtUtc: string;
   latestAcquisitionUtc: string;
   archiveChecksums: string[];
@@ -861,6 +863,8 @@ export function aggregateCalendarAnalytics(params: {
     viirsCategories = ['low', 'nominal', 'high'],
     metric,
     platformRegistry,
+    archiveCoverageStart = '2024-01-01',
+    archiveCoverageEnd = '2026-11-13',
     retrievedAtUtc,
     latestAcquisitionUtc,
     archiveChecksums,
@@ -893,9 +897,11 @@ export function aggregateCalendarAnalytics(params: {
 
   const bins = generateTimeBins(startDate, endDate, granularity);
 
-  // Historical archive coverage window for demo dataset: 2024-01-01 .. 2026-11-13
-  const archiveStartStr = '2024-01-01';
-  const archiveEndStr = '2026-11-13';
+  // Historical/live coverage window (defaults to demo snapshot bounds unless overridden by server live window)
+  const archiveStartStr = archiveCoverageStart;
+  const archiveEndStr = archiveCoverageEnd;
+  const availableModisRecords: CanonicalObservation[] = [];
+  const availableViirsRecords: CanonicalObservation[] = [];
 
   const series: CalendarBinRecord[] = bins.map((bin) => {
     const binStartDateStr = bin.startUtc.slice(0, 10);
@@ -957,7 +963,7 @@ export function aggregateCalendarAnalytics(params: {
 
     if (binStartDateStr < archiveStartStr || binStartDateStr > archiveEndStr) {
       coverageState = 'NO_SOURCE_DATA';
-      coverageNote = 'Selected period is outside loaded NASA FIRMS archive snapshot coverage (2024-01-01 to 2026-11-13).';
+      coverageNote = `Selected period is outside loaded NASA FIRMS coverage (${archiveStartStr} to ${archiveEndStr}).`;
     } else if (activePlatforms.length === 0) {
       coverageState = 'NO_SOURCE_DATA';
       coverageNote = `No active platform data available for ${unavailablePlatforms.join(', ')} in this window (VIIRS S-NPP archive ends 2026-11-02).`;
@@ -990,8 +996,15 @@ export function aggregateCalendarAnalytics(params: {
     };
     const modisConfBins = { low_0_29: 0, nominal_30_79: 0, high_80_100: 0 };
     const viirsConfBins = { low: 0, nominal: 0, high: 0 };
+    const availableBinRecords: CanonicalObservation[] = [];
 
     for (const r of binRecords) {
+      if (r.sensor === 'MODIS' && !modisAvailable) continue;
+      if (r.sensor === 'VIIRS' && !viirsAvailable) continue;
+      availableBinRecords.push(r);
+      if (r.sensor === 'MODIS') availableModisRecords.push(r);
+      else availableViirsRecords.push(r);
+
       platformBreakdown[r.platform] = (platformBreakdown[r.platform] ?? 0) + 1;
       processingBreakdown[r.processing_status] =
         (processingBreakdown[r.processing_status] ?? 0) + 1;
@@ -1006,8 +1019,8 @@ export function aggregateCalendarAnalytics(params: {
       }
     }
 
-    const modisFrp = computeFrpSummary(binRecords, 'MODIS');
-    const viirsFrp = computeFrpSummary(binRecords, 'VIIRS');
+    const modisFrp = computeFrpSummary(availableBinRecords, 'MODIS');
+    const viirsFrp = computeFrpSummary(availableBinRecords, 'VIIRS');
 
     const pooledCount =
       modisCount === null && viirsCount === null
@@ -1106,11 +1119,6 @@ export function aggregateCalendarAnalytics(params: {
     }
   }
 
-  const inWindowRecords = filteredRecords.filter((r) => {
-    const t = Date.parse(r.acq_datetime_utc);
-    return bins.length > 0 && t >= bins[0].startMs && t < bins[bins.length - 1].endMs;
-  });
-
   const thresholdsModis = computeThresholds(
     series.map((s) =>
       metric === 'frp_mw' ? s.frp_summary.MODIS.sum_mw : s.values.MODIS
@@ -1162,8 +1170,8 @@ export function aggregateCalendarAnalytics(params: {
       VIIRS_detections: totalViirs,
       pooled_observation_count: totalModis + totalViirs,
       platform_totals: platformTotals,
-      MODIS_frp: computeFrpSummary(inWindowRecords, 'MODIS'),
-      VIIRS_frp: computeFrpSummary(inWindowRecords, 'VIIRS'),
+      MODIS_frp: computeFrpSummary(availableModisRecords, 'MODIS'),
+      VIIRS_frp: computeFrpSummary(availableViirsRecords, 'VIIRS'),
       superseded_nrt_total: supersededNrtCount,
       duplicates_removed_total: exactDuplicatesRemoved,
     },

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import crypto from 'crypto';
 import http from 'http';
@@ -37,7 +38,9 @@ import {
   MapGridResponse,
   MapHotspotsResponse,
   PaginatedObservationsResponse,
+  ParquetArchiveManifest,
   PlatformId,
+  PlatformRegistryEntry,
   ProcessingStatus,
   SensorFilter,
   YoyYearSummary,
@@ -363,6 +366,45 @@ function parseSharedFilters(query: Record<string, unknown>): {
 }
 
 /**
+ * Builds the runtime platform availability registry by combining Parquet historical start dates
+ * with the live NASA FIRMS 24-hour feed max date (e.g. extending Terra/Aqua/NOAA-20/NOAA-21 through today's UTC date).
+ */
+function buildDynamicPlatformRegistry(
+  firmsSnap: LiveFirmsSnapshot,
+  manifest: ParquetArchiveManifest | null
+): PlatformRegistryEntry[] {
+  return PLATFORM_REGISTRY.map((p) => {
+    const pqCov = manifest?.platform_coverage?.find((c) => c.platform === p.platform_id);
+    const patched = pqCov
+      ? {
+          ...p,
+          first_observation_date: pqCov.first_date,
+        }
+      : p;
+
+    if (!firmsSnap.connected) return patched;
+    if (patched.platform_id === 'SNPP') {
+      const snppFeed = firmsSnap.feedStats.find((f) => f.platform === 'SNPP');
+      if (!snppFeed || snppFeed.row_count === 0) {
+        return {
+          ...patched,
+          status_checked_at_utc: firmsSnap.syncedAtUtc,
+        };
+      }
+    }
+    if (['TERRA', 'AQUA', 'NOAA20', 'NOAA21'].includes(patched.platform_id)) {
+      return {
+        ...patched,
+        last_observation_date: firmsSnap.maxDate,
+        latest_acquisition_utc: firmsSnap.latestAcquisitionUtc,
+        status_checked_at_utc: firmsSnap.syncedAtUtc,
+      };
+    }
+    return patched;
+  });
+}
+
+/**
  * Shared server-side analytical aggregator combining DuckDB Parquet (real Indonesia 2001-2026),
  * live NASA FIRMS 24h streams (global), and explicitly-labeled fixture fallback (non-Indonesia historical).
  * Strictly prevents overlapping UTC dates from being double counted.
@@ -400,6 +442,7 @@ async function computeServerCalendarAnalytics(params: {
 
   const manifest = getParquetManifest();
   const useParquet = Boolean(manifest?.available && isAoiInParquetCoverage(aoi));
+  const dynamicPlatforms = buildDynamicPlatformRegistry(firmsSnap, manifest);
 
   const liveCutoffDate = firmsSnap.connected ? firmsSnap.minDate : '9999-12-31';
   const liveMaxDate = firmsSnap.connected ? firmsSnap.maxDate : '2026-11-12';
@@ -502,7 +545,7 @@ async function computeServerCalendarAnalytics(params: {
       processingStatus,
       dayNight,
       metric,
-      platformRegistry: PLATFORM_REGISTRY,
+      platformRegistry: dynamicPlatforms,
       archiveCoverageStart: manifest.date_range.min_date,
       archiveCoverageEnd: firmsSnap.connected ? liveMaxDate : manifest.date_range.max_date,
       dataMode: firmsSnap.connected ? 'LIVE_NASA_FIRMS' : 'DEMO_SNAPSHOT',
@@ -561,7 +604,9 @@ async function computeServerCalendarAnalytics(params: {
     modisMinConfidence,
     viirsCategories,
     metric: metric === 'frp_mw' ? 'frp_mw' : 'detection_count',
-    platformRegistry: PLATFORM_REGISTRY,
+    platformRegistry: dynamicPlatforms,
+    archiveCoverageStart: '2024-01-01',
+    archiveCoverageEnd: firmsSnap.connected ? liveMaxDate : '2026-11-13',
     retrievedAtUtc: firmsSnap.connected ? firmsSnap.syncedAtUtc : RETRIEVED_AT_UTC,
     latestAcquisitionUtc: firmsSnap.connected
       ? firmsSnap.latestAcquisitionUtc
@@ -658,35 +703,7 @@ async function startServer() {
       ? 'LIVE_NASA_EONET_HYBRID'
       : 'DEMO_SNAPSHOT';
 
-    const dynamicPlatforms = PLATFORM_REGISTRY.map((p) => {
-      const pqCov = manifest?.platform_coverage?.find((c) => c.platform === p.platform_id);
-      const patched = pqCov
-        ? {
-            ...p,
-            first_observation_date: pqCov.first_date,
-          }
-        : p;
-
-      if (!firmsSnap.connected) return patched;
-      if (patched.platform_id === 'SNPP') {
-        const snppFeed = firmsSnap.feedStats.find((f) => f.platform === 'SNPP');
-        if (!snppFeed || snppFeed.row_count === 0) {
-          return {
-            ...patched,
-            status_checked_at_utc: firmsSnap.syncedAtUtc,
-          };
-        }
-      }
-      if (['TERRA', 'AQUA', 'NOAA20', 'NOAA21'].includes(patched.platform_id)) {
-        return {
-          ...patched,
-          last_observation_date: firmsSnap.maxDate,
-          latest_acquisition_utc: firmsSnap.latestAcquisitionUtc,
-          status_checked_at_utc: firmsSnap.syncedAtUtc,
-        };
-      }
-      return patched;
-    });
+    const dynamicPlatforms = buildDynamicPlatformRegistry(firmsSnap, manifest);
 
     const response: DataStatusResponse = {
       status: 'PARTIAL_PLATFORM_GAP',

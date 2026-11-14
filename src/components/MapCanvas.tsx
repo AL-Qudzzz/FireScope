@@ -25,6 +25,7 @@ import {
   isOffshoreMarineObservation,
 } from '../science/fireScience';
 import { computeSolarTerminatorPolygon } from '../science/comparisonScience';
+import { InfoPopover } from './ProgressiveDisclosure';
 
 export type BasemapStyle = 'satellite' | 'terrain' | 'reference';
 
@@ -847,8 +848,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           marker.on('mouseover', () => {
             if (!map || !sharedTooltip) return;
             const kindLabel = isOffshoreFlare
-              ? '<span style="color:#38BDF8;">Anomali Laut / Offshore Flare</span>'
-              : '<span style="color:#F87171;">Titik Api</span>';
+              ? '<span style="color:#38BDF8;">Offshore Gas Flare</span>'
+              : '<span style="color:#F87171;">Active Hotspot</span>';
             sharedTooltip
               .setLatLng(latlng)
               .setContent(
@@ -856,7 +857,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                   <strong>${kindLabel} · ${obs.sensor} (${obs.platform})</strong><br/>
                   Product: ${obs.source_product} · Conf: ${obs.confidence_native ?? '—'}<br/>
                   UTC: ${obs.acq_datetime_utc}<br/>
-                  Koordinat: ${obs.latitude.toFixed(4)}°, ${obs.longitude.toFixed(4)}°<br/>
+                  Coordinates: ${obs.latitude.toFixed(4)}°, ${obs.longitude.toFixed(4)}°<br/>
                   FRP: ${obs.frp_mw !== null ? `${obs.frp_mw} MW` : 'Unavailable'}
                 </div>`
               );
@@ -1177,7 +1178,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               : isCompactControlsOpen
               ? 'flex'
               : 'hidden lg:flex'
-          } flex-col items-end gap-2 max-h-[calc(100dvh-210px)] overflow-y-auto p-0.5`}
+          } flex-col items-end gap-2 overflow-visible p-0.5`}
         >
           <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md p-0.5 flex items-center gap-0.5 text-[11px] shadow-md">
             {(['satellite', 'terrain', 'reference'] as BasemapStyle[]).map((style) => (
@@ -1280,18 +1281,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           <div className="bg-[var(--surface-1)]/95 border border-[var(--border-subtle)] rounded-md px-2.5 py-2 text-[11px] space-y-1 shadow-md">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 bg-[#EF4444] border border-[#FCA5A5] inline-block rounded-full shrink-0 shadow-[0_0_6px_rgba(239,68,68,0.8)]" />
-              <span className="text-[var(--text-primary)] font-medium">Titik Api · VIIRS C2</span>
+              <span className="text-[var(--text-primary)] font-medium">VIIRS Hotspot</span>
               <span className="text-[var(--text-muted)] font-mono">375 m</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 bg-[#DC2626] border border-[#FCA5A5] inline-block rounded-full shrink-0 shadow-[0_0_6px_rgba(220,38,38,0.8)]" />
-              <span className="text-[var(--text-primary)] font-medium">Titik Api · MODIS C6.1</span>
+              <span className="text-[var(--text-primary)] font-medium">MODIS Hotspot</span>
               <span className="text-[var(--text-muted)] font-mono">1 km</span>
             </div>
             {!excludeOffshore && (
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 bg-[#F59E0B] border border-[#38BDF8] inline-block rounded-full shrink-0" />
-                <span className="text-[var(--text-primary)] font-medium">Offshore Flare / Laut</span>
+                <span className="text-[var(--text-primary)] font-medium">Offshore Gas Flare</span>
               </div>
             )}
             {!compactPreview && onToggleExcludeOffshore && (
@@ -1312,8 +1313,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               </div>
             )}
             {mapDisplayMode !== 'points' && !compactPreview && (
-              <div className="pt-1 border-t border-[var(--border-subtle)] text-[10px] text-[var(--warning)] max-w-[190px] leading-tight">
-                {gridResolutionDeg}° unprojected grid cells are not equal-area normalized across latitudes.
+              <div className="pt-1 border-t border-[var(--border-subtle)] flex items-center justify-end">
+                <InfoPopover title="Grid Projection Note" triggerLabel="Projection note" align="right">
+                  {gridResolutionDeg}° unprojected grid cells are not equal-area normalized across latitudes.
+                </InfoPopover>
               </div>
             )}
           </div>
@@ -1341,8 +1344,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         </span>
         {!compactPreview && (
           <>
-            <span className="text-[var(--border-subtle)] hidden xl:inline shrink-0">|</span>
-            <span className="hidden xl:inline shrink-0">Datum: EPSG:4326 → OSM EPSG:3857</span>
             <span className="text-[var(--border-subtle)] hidden sm:inline shrink-0">|</span>
             <span className="hidden sm:inline truncate">
               {mapDisplayMode !== 'points' && gridData

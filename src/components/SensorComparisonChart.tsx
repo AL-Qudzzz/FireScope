@@ -1,25 +1,35 @@
 import React, { useState } from 'react';
-import { BarChart3, Info } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 import {
   CalendarAnalyticsResponse,
   PlatformId,
 } from '../types/firescope';
+import { InfoPopover } from './ProgressiveDisclosure';
 
 interface SensorComparisonChartProps {
   analytics: CalendarAnalyticsResponse;
   selectedBinKey: string | null;
   onSelectBin: (binKey: string) => void;
+  isLoading?: boolean;
+}
+
+function formatAxisTick(value: number): string {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+  if (value >= 10000) return `${Math.round(value / 1000)}k`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  return Math.round(value).toLocaleString();
 }
 
 export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
   analytics,
   selectedBinKey,
   onSelectBin,
+  isLoading = false,
 }) => {
   const [breakdownMode, setBreakdownMode] = useState<'sensor' | 'platform'>('sensor');
   const { series, query } = analytics;
 
-  const maxVal = Math.max(
+  const maxSensorVal = Math.max(
     10,
     ...series.map((b) => {
       if (query.metric === 'frp_mw') {
@@ -31,8 +41,9 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
       return Math.max(b.values.MODIS ?? 0, b.values.VIIRS ?? 0);
     })
   );
+
   const maxPlatformCount = Math.max(
-    1,
+    10,
     ...series.flatMap((b) => [
       b.platform_breakdown.TERRA ?? 0,
       b.platform_breakdown.AQUA ?? 0,
@@ -42,49 +53,66 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
     ])
   );
 
+  const effectiveMax = breakdownMode === 'platform' ? maxPlatformCount : maxSensorVal;
+  const yTicks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => Math.round(effectiveMax * ratio));
+
   const platformColors: Record<PlatformId, string> = {
-    TERRA: '#FFB454',
-    AQUA: '#D97706',
-    SNPP: '#A5F3FC',
-    NOAA20: '#61BDE0',
-    NOAA21: '#0284C7',
+    TERRA: '#EA8C24',
+    AQUA: '#B45309',
+    SNPP: '#38BDF8',
+    NOAA20: '#0284C7',
+    NOAA21: '#1D4ED8',
   };
+
+  const isSparseWindow = series.length > 0 && series.length <= 4;
 
   return (
     <section
       aria-label="Sensor and Platform Time-Series Comparison"
-      className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-4"
+      aria-busy={isLoading}
+      className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-md p-4 space-y-4"
     >
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)]">
-        <div>
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-[var(--ember)]" />
-            <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
-              Sensor &amp; Platform Time-Series Comparison
-            </h2>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]">
-              {breakdownMode === 'platform'
-                ? 'Unit: Observation Records per Platform'
-                : query.metric === 'frp_mw'
-                ? 'Unit: Observed FRP (MW)'
-                : 'Unit: Observation Records'}
-            </span>
-          </div>
-          <p className="text-[12px] text-[var(--text-secondary)] mt-0.5">
-            Aligned time axis preserving separate MODIS (1 km) and VIIRS (375 m) series. Never
-            sums FRP across sensors or treats raw counts as equivalent fire incidents.
-          </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <BarChart3 className="w-4 h-4 text-[var(--ember)]" />
+          <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
+            Sensor &amp; Platform Time-Series Comparison
+          </h2>
+          <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-muted)]">
+            {breakdownMode === 'platform'
+              ? 'Unit: Records / Platform'
+              : query.metric === 'frp_mw'
+              ? 'Unit: Observed FRP (MW)'
+              : 'Unit: Observation Records'}
+          </span>
+          <InfoPopover
+            title="Why MODIS & VIIRS Counts Differ"
+            triggerLabel="Why counts differ?"
+          >
+            <div className="space-y-1.5">
+              <p>
+                Aligned time series keep MODIS (1 km) and VIIRS (375 m) separate—never sum FRP
+                across sensors or treat raw counts as equivalent fire incidents.
+              </p>
+              <p>
+                VIIRS 375 m detects smaller and cooler thermal anomalies than MODIS 1 km and varies
+                less across the scan swath (Li et al., 2018; Fu et al., 2020). Apparent differences
+                reflect sensor footprint, overpass timing, and platform availability (VIIRS S-NPP
+                archive ends 2026-11-02) rather than calibrated burned-area changes.
+              </p>
+            </div>
+          </InfoPopover>
         </div>
 
         {/* Sensor vs Platform Breakdown Toggle */}
-        <div className="flex items-center bg-[var(--app-bg)] p-0.5 rounded-[6px] border border-[var(--border-subtle)] text-[11px]">
+        <div className="flex items-center bg-[var(--surface-2)] p-0.5 rounded-md border border-[var(--border-subtle)] text-[11px]">
           <button
             type="button"
             onClick={() => setBreakdownMode('sensor')}
-            className={`px-2.5 py-1 rounded font-medium ${
+            className={`px-2.5 py-1 rounded font-medium transition-colors ${
               breakdownMode === 'sensor'
-                ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
+                ? 'bg-[var(--surface-1)] text-[var(--text-primary)] shadow-xs'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -93,13 +121,13 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
           <button
             type="button"
             onClick={() => setBreakdownMode('platform')}
-            className={`px-2.5 py-1 rounded font-medium ${
+            className={`px-2.5 py-1 rounded font-medium transition-colors ${
               breakdownMode === 'platform'
-                ? 'bg-[var(--surface-2)] text-[var(--text-primary)]'
+                ? 'bg-[var(--surface-1)] text-[var(--text-primary)] shadow-xs'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
-            5-Platform Split (Terra/Aqua/SNPP/N20/N21)
+            5-Platform Split
           </button>
         </div>
       </div>
@@ -107,15 +135,15 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
       {/* Legend */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
         {breakdownMode === 'sensor' ? (
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 bg-[#FFB454] inline-block rounded-[1px]" />
+              <span className="w-3 h-3 bg-[var(--modis-fill)] inline-block rounded-[1px]" />
               <span className="text-[var(--text-primary)] font-medium">
                 MODIS (Terra + Aqua · 1 km C6.1)
               </span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 bg-[#61BDE0] inline-block rounded-full" />
+              <span className="w-3 h-3 bg-[var(--viirs-fill)] inline-block rounded-full" />
               <span className="text-[var(--text-primary)] font-medium">
                 VIIRS (S-NPP + NOAA-20 + NOAA-21 · 375 m C2)
               </span>
@@ -139,103 +167,165 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
             ))}
           </div>
         )}
+      </div>
 
-        <div className="font-mono text-[var(--text-muted)]">
-          Window: {query.start_date} → {query.end_date} ({query.granularity})
+      {/* Calibrated Chart Canvas with Y-Axis Scale & Reference Gridlines */}
+      {isLoading ? (
+        <div className="h-56 w-full rounded bg-[var(--surface-2)]/50 border border-[var(--border-subtle)] p-4 flex items-end gap-3">
+          {Array.from({ length: 12 }).map((_, idx) => (
+            <div
+              key={idx}
+              style={{ height: `${30 + ((idx * 17) % 60)}%` }}
+              className="flex-1 rounded-t atlas-skeleton"
+            />
+          ))}
         </div>
-      </div>
+      ) : (
+        <div className="h-60 w-full bg-[var(--app-bg)]/55 border border-[var(--border-subtle)] rounded p-3 flex gap-2.5">
+          {/* Y-Axis Scale Column */}
+          <div
+            aria-hidden="true"
+            className="w-11 shrink-0 pb-6 flex flex-col justify-between items-end text-[10px] font-mono text-[var(--text-muted)] tabular-nums select-none"
+          >
+            {yTicks.map((tick, idx) => (
+              <span key={idx} className="leading-none">
+                {formatAxisTick(tick)}
+              </span>
+            ))}
+          </div>
 
-      {/* Interactive Paired Bar / Series Chart */}
-      <div className="h-52 w-full bg-[var(--app-bg)] border border-[var(--border-subtle)] rounded-[6px] p-3 flex flex-col justify-between">
-        <div className="flex-1 flex items-end gap-1.5 overflow-x-auto pb-1">
-          {series.map((bin) => {
-            const isSelected = bin.bin_key === selectedBinKey;
-            const isMissing = bin.coverage_state === 'NO_SOURCE_DATA';
+          {/* Plot Area with Reference Lines */}
+          <div className="flex-1 relative min-w-0 flex flex-col">
+            <div
+              aria-hidden="true"
+              className="absolute inset-x-0 top-0 bottom-6 pointer-events-none flex flex-col justify-between"
+            >
+              {yTicks.map((_, idx) => (
+                <div
+                  key={idx}
+                  className={`w-full border-t ${
+                    idx === yTicks.length - 1
+                      ? 'border-[var(--border-strong)]'
+                      : 'border-dashed border-[var(--border-subtle)]'
+                  }`}
+                />
+              ))}
+            </div>
 
-            const modisVal =
-              query.metric === 'frp_mw'
-                ? bin.frp_summary.MODIS.sum_mw ?? 0
-                : bin.values.MODIS ?? 0;
-            const viirsVal =
-              query.metric === 'frp_mw'
-                ? bin.frp_summary.VIIRS.sum_mw ?? 0
-                : bin.values.VIIRS ?? 0;
+            <div
+              className={`relative z-10 flex-1 flex items-end ${
+                isSparseWindow ? 'justify-start gap-4 px-2' : 'gap-1.5'
+              } overflow-x-auto pb-0.5`}
+            >
+              {series.map((bin) => {
+                const isSelected = bin.bin_key === selectedBinKey;
+                const isMissing = bin.coverage_state === 'NO_SOURCE_DATA';
 
-            const modisH = Math.min(100, Math.round((modisVal / maxVal) * 100));
-            const viirsH = Math.min(100, Math.round((viirsVal / maxVal) * 100));
+                const modisVal =
+                  query.metric === 'frp_mw'
+                    ? bin.frp_summary.MODIS.sum_mw ?? 0
+                    : bin.values.MODIS ?? 0;
+                const viirsVal =
+                  query.metric === 'frp_mw'
+                    ? bin.frp_summary.VIIRS.sum_mw ?? 0
+                    : bin.values.VIIRS ?? 0;
 
-            return (
-              <button
-                key={bin.bin_key}
-                type="button"
-                onClick={() => onSelectBin(bin.bin_key)}
-                title={`${bin.label}: MODIS ${modisVal}, VIIRS ${viirsVal}`}
-                className={`flex-1 min-w-[26px] h-full flex flex-col justify-end items-center rounded-xs px-0.5 pt-2 transition-colors ${
-                  isSelected
-                    ? 'bg-[var(--surface-3)] ring-1 ring-[var(--selected)]'
-                    : isMissing
-                    ? 'pattern-missing-coverage'
-                    : 'hover:bg-[var(--surface-2)]'
-                }`}
-              >
-                {!isMissing && breakdownMode === 'sensor' && (
-                  <div className="w-full h-full flex items-end justify-center gap-0.5">
-                    {(query.sensor === 'ALL' || query.sensor === 'MODIS') && (
-                      <div
-                        style={{ height: `${Math.max(modisVal > 0 ? 6 : 0, modisH)}%` }}
-                        className="w-2.5 bg-[#FFB454] rounded-t-[1px] transition-all"
-                      />
-                    )}
-                    {(query.sensor === 'ALL' || query.sensor === 'VIIRS') && (
-                      <div
-                        style={{ height: `${Math.max(viirsVal > 0 ? 6 : 0, viirsH)}%` }}
-                        className="w-2.5 bg-[#61BDE0] rounded-t-[1px] transition-all"
-                      />
-                    )}
-                  </div>
-                )}
+                const modisH = Math.min(100, Math.round((modisVal / effectiveMax) * 100));
+                const viirsH = Math.min(100, Math.round((viirsVal / effectiveMax) * 100));
 
-                {!isMissing && breakdownMode === 'platform' && (
-                  <div className="w-full h-full flex items-end justify-center gap-[1px]">
-                    {(['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'] as PlatformId[]).map(
-                      (pid) => {
-                        const pCount = bin.platform_breakdown[pid] ?? 0;
-                        const pH = Math.min(100, Math.round((pCount / maxPlatformCount) * 100));
-                        return (
-                          <div
-                            key={pid}
-                            style={{
-                              height: `${Math.max(pCount > 0 ? 6 : 0, pH)}%`,
-                              backgroundColor: platformColors[pid],
-                            }}
-                            className="w-1.5 rounded-t-[1px]"
-                          />
-                        );
-                      }
-                    )}
-                  </div>
-                )}
+                return (
+                  <button
+                    key={bin.bin_key}
+                    type="button"
+                    onClick={() => onSelectBin(bin.bin_key)}
+                    title={`${bin.label}: MODIS ${modisVal.toLocaleString()}, VIIRS ${viirsVal.toLocaleString()}`}
+                    className={`${
+                      isSparseWindow ? 'flex-1 max-w-[160px] min-w-[96px]' : 'flex-1 min-w-[28px]'
+                    } h-full flex flex-col justify-end items-center rounded-xs px-1 pt-2 transition-colors ${
+                      isSelected
+                        ? 'bg-[var(--surface-3)]/85 ring-1 ring-[var(--selected)]'
+                        : isMissing
+                        ? 'pattern-missing-coverage'
+                        : 'hover:bg-[var(--surface-2)]/75'
+                    }`}
+                  >
+                    <div className="w-full flex-1 flex items-end justify-center pb-0.5 min-h-0">
+                      {!isMissing && breakdownMode === 'sensor' && (
+                        <div className="w-full h-full flex items-end justify-center gap-1">
+                          {(query.sensor === 'ALL' || query.sensor === 'MODIS') && (
+                            <div className="h-full flex flex-col justify-end items-center gap-1">
+                              {isSparseWindow && (
+                                <span className="text-[10px] font-mono font-semibold text-[var(--modis)] tabular-nums">
+                                  {modisVal.toLocaleString()}
+                                </span>
+                              )}
+                              <div
+                                style={{ height: `${Math.max(modisVal > 0 ? 4 : 0, modisH)}%` }}
+                                className={`${
+                                  isSparseWindow ? 'w-7' : 'w-2.5'
+                                } bg-[var(--modis-fill)] rounded-t-[1px] transition-all`}
+                              />
+                            </div>
+                          )}
+                          {(query.sensor === 'ALL' || query.sensor === 'VIIRS') && (
+                            <div className="h-full flex flex-col justify-end items-center gap-1">
+                              {isSparseWindow && (
+                                <span className="text-[10px] font-mono font-semibold text-[var(--viirs)] tabular-nums">
+                                  {viirsVal.toLocaleString()}
+                                </span>
+                              )}
+                              <div
+                                style={{ height: `${Math.max(viirsVal > 0 ? 4 : 0, viirsH)}%` }}
+                                className={`${
+                                  isSparseWindow ? 'w-7' : 'w-2.5'
+                                } bg-[var(--viirs-fill)] rounded-t-[1px] transition-all`}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
 
-                <span className="text-[9px] font-mono text-[var(--text-muted)] mt-1 truncate max-w-full">
-                  {bin.bin_key.slice(-5)}
-                </span>
-              </button>
-            );
-          })}
+                      {!isMissing && breakdownMode === 'platform' && (
+                        <div className="w-full h-full flex items-end justify-center gap-[2px]">
+                          {(['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'] as PlatformId[]).map(
+                            (pid) => {
+                              const pCount = bin.platform_breakdown[pid] ?? 0;
+                              const pH = Math.min(100, Math.round((pCount / effectiveMax) * 100));
+                              return (
+                                <div
+                                  key={pid}
+                                  title={`${pid}: ${pCount.toLocaleString()}`}
+                                  style={{
+                                    height: `${Math.max(pCount > 0 ? 4 : 0, pH)}%`,
+                                    backgroundColor: platformColors[pid],
+                                  }}
+                                  className={`${
+                                    isSparseWindow ? 'w-3.5' : 'w-1.5'
+                                  } rounded-t-[1px] transition-all`}
+                                />
+                              );
+                            }
+                          )}
+                        </div>
+                      )}
+
+                      {isMissing && isSparseWindow && (
+                        <span className="text-[10px] font-mono text-[var(--text-muted)] self-center">
+                          No data
+                        </span>
+                      )}
+                    </div>
+
+                    <span className="h-5 flex items-center text-[10px] font-mono text-[var(--text-muted)] mt-1 truncate max-w-full">
+                      {isSparseWindow ? bin.label : bin.bin_key.slice(-5)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </div>
-
-      {/* Scientific Caveat Footer (Section 7.5) */}
-      <div className="flex items-start gap-2 text-[11px] text-[var(--text-secondary)]">
-        <Info className="w-3.5 h-3.5 text-[var(--modis)] shrink-0 mt-0.5" />
-        <span>
-          <strong>Methodological note:</strong> VIIRS 375 m detects smaller and cooler thermal
-          anomalies than MODIS 1 km and varies less across the scan swath (Li et al., 2018;
-          Fu et al., 2020). Apparent series differences reflect sensor footprint, overpass timing,
-          and platform availability (VIIRS S-NPP archive ends 2026-11-02) rather than calibrated
-          changes in burned area.
-        </span>
-      </div>
+      )}
     </section>
   );
 };

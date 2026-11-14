@@ -2,43 +2,55 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --app-bg: #F4F6F8;
+  --app-bg: #F3F5F1;
   --surface-1: #FFFFFF;
-  --surface-2: #F8FAFC;
-  --surface-3: #EEF2F6;
-  --border-subtle: #DCE3EA;
-  --text-primary: #16212B;
-  --text-secondary: #526171;
-  --text-muted: #64748B;
-  --ember: #D95D24;
-  --ember-hover: #EA6C32;
-  --modis: #D97706;
-  --viirs: #0284C7;
-  --selected: #16212B;
+  --surface-2: #EAEEE7;
+  --surface-3: #DCE2D8;
+  --border-subtle: #CFD7CA;
+  --border-strong: #94A18E;
+  --text-primary: #111A15;
+  --text-secondary: #37473E;
+  --text-muted: #526358;
+  --ember: #C2410C;
+  --ember-hover: #9A3412;
+  --modis: #B45309;
+  --modis-fill: #D97706;
+  --modis-rgb: 217, 119, 6;
+  --viirs: #0369A1;
+  --viirs-fill: #0284C7;
+  --viirs-rgb: 2, 132, 199;
+  --selected: #0F6E56;
   --success: #15803D;
   --warning: #B45309;
   --danger: #B91C1C;
-  --unknown: #64748B;
+  --unknown: #526358;
+  color-scheme: light;
 }
 
 .dark {
-  --app-bg: #0D151B;
-  --surface-1: #14212A;
-  --surface-2: #1B2B35;
-  --surface-3: #243843;
-  --border-subtle: #30434F;
-  --text-primary: #E8EEF2;
-  --text-secondary: #A9B7C0;
-  --text-muted: #7F929E;
+  --app-bg: #0A1014;
+  --surface-1: #101920;
+  --surface-2: #16222B;
+  --surface-3: #1E2E3A;
+  --border-subtle: #243642;
+  --border-strong: #3B5262;
+  --text-primary: #ECF2F5;
+  --text-secondary: #B2C2CC;
+  --text-muted: #8499A6;
   --ember: #F0783C;
   --ember-hover: #FF8A50;
   --modis: #FFB454;
+  --modis-fill: #FFB454;
+  --modis-rgb: 255, 180, 84;
   --viirs: #61BDE0;
-  --selected: #FFFFFF;
-  --success: #55B88A;
-  --warning: #E7B45A;
-  --danger: #E46D64;
-  --unknown: #71818B;
+  --viirs-fill: #61BDE0;
+  --viirs-rgb: 97, 189, 224;
+  --selected: #2DD4BF;
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --unknown: #8499A6;
+  color-scheme: dark;
 }
 
 @layer base {
@@ -61,6 +73,20 @@
   code, pre, .font-mono {
     font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background-color: color-mix(in srgb, var(--ember) 22%, transparent);
+    color: var(--text-primary);
+  }
+
+  input, textarea, select {
+    caret-color: var(--ember);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--selected);
+    outline-offset: 2px;
   }
 }
 
@@ -87,11 +113,25 @@
 .pattern-missing-coverage {
   background-image: repeating-linear-gradient(
     -45deg,
-    rgba(113, 129, 139, 0.14),
-    rgba(113, 129, 139, 0.14) 4px,
+    color-mix(in srgb, var(--unknown) 16%, transparent),
+    color-mix(in srgb, var(--unknown) 16%, transparent) 4px,
     transparent 4px,
     transparent 8px
   );
+}
+
+@keyframes atlasSkeletonPulse {
+  0%, 100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.atlas-skeleton {
+  background-color: var(--surface-2);
+  animation: atlasSkeletonPulse 1.4s ease-in-out infinite;
 }
 
 /* Custom subtle scrollbars for geospatial drawers */
