@@ -35,6 +35,7 @@ AGENTS.md
 MANIFEST.json
 graphify-out/
 .aistudio/
+public/assets/aistudio/
 
 # =============================================================================
 # 5. Raw NASA Archives, ETL Scratch & DuckDB Temporary Files
