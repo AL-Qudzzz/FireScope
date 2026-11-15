@@ -154,28 +154,16 @@ All datasets in [`server.ts`](./server.ts) maintain strict date-boundary separat
 
 ## 5. System Architecture and Repository Layout
 
-```text
-  NASA FIRMS 24h CSV + EONET v3 + Area API v4       Immutable / Pre-Built Local Archives
-             (HTTPS Server-Side Fetch)              (Parquet 8.91M + Gzipped Presets 692k)
-                         |                                           |
-                         +-------------------+   +-------------------+
-                                             v   v
-                                    Express Server (server.ts)
-                               Validation | Deduplication | /api/v1/*
-                                             |
-          +----------------------------------+----------------------------------+
-          v                                  v                                  v
-   fireScience.ts                   comparisonScience.ts             harmonizationScience.ts
-   UTC, BBOX, NRT->STD dedup        FR-08 YoY, FR-09 MAD,            M3 K_s(t) normalization,
-   FRP stats, Offshore mask         Multi-AOI, 0.25 deg Grid         OLS Log Bridge, Co-Location
-          |                                  |                                  |
-          +----------------------------------+----------------------------------+
-                                             v
-                 React 19 Frontend (useFireScopeWorkspace.ts + Map/Calendar/Compare UI)
-```
+<div align="center">
+  <img src="public/brand/firescope-architecture-dark.svg" alt="FireScope System Architecture: NASA FIRMS and EONET feeds alongside Parquet and global preset archives flowing through Express API, scientific engines, M3 Harmonizer, and React 19 Workspace" width="100%" />
+  <br />
+  <sub>Vector architecture export from <a href="./public/brand/firescope-architecture-dark.html">public/brand/firescope-architecture-dark.html</a> (Night Orbit dark palette, WCAG AA contrast verified).</sub>
+</div>
+
+<br />
 
 <details>
-<summary>Inspect tracked repository layout (47 tracked files)</summary>
+<summary>Inspect tracked repository layout (49 tracked files)</summary>
 
 ```text
 .
@@ -193,7 +181,9 @@ All datasets in [`server.ts`](./server.ts) maintain strict date-boundary separat
 │   └── brand/
 │       ├── firescope-icon.svg             # 1:1 faceted flame favicon mark
 │       ├── firescope-wordmark.svg         # Theme-adaptive wordmark SVG (prefers-color-scheme)
-│       └── firescope-lockup.svg           # Combined icon + wordmark SVG
+│       ├── firescope-lockup.svg           # Combined icon + wordmark SVG
+│       ├── firescope-architecture-dark.html # Editorial system architecture diagram source (Night Orbit dark HTML)
+│       └── firescope-architecture-dark.svg  # Standalone exported dark vector architecture diagram for README
 ├── scripts/
 │   ├── buildParquet.ts                    # DuckDB ETL rebuilding data/processed/*.parquet from local data/raw/*.zip
 │   └── fetchGlobalPresetsNasa.ts          # Area API fetcher generating data/processed/global_presets_nasa.json.gz

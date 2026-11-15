@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FireScope · System Architecture (Night Orbit)</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #0A1014;
+      --color-paper-2: #16222B;
+      --color-ink:     #ECF2F5;
+      --color-muted:   #B2C2CC;
+      --color-soft:    #8499A6;
+      --color-accent:  #F0783C;
+      --color-link:    #61BDE0;
+      --font-sans:     'IBM Plex Sans', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'IBM Plex Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · FireScope Night Orbit</p>
+    <h1>Active Fire Ingestion, Harmonization &amp; Workspace Flow</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="firescope-architecture-dark-title firescope-architecture-dark-desc">
+        <title id="firescope-architecture-dark-title">FireScope System Architecture</title>
+        <desc id="firescope-architecture-dark-desc">Night Orbit dark-theme architecture showing NASA FIRMS and EONET live feeds and local Parquet and global preset archives flowing into the Express REST API, scientific engines, M3 cross-sensor harmonizer, and React 19 workspace.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#B2C2CC"/>
+          </marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#F0783C"/>
+          </marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#61BDE0"/>
+          </marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#0A1014"/>
+
+        <!-- Zones (drawn before arrows and nodes) -->
+        <rect x="40" y="60" width="176" height="312" rx="8"
+              fill="rgba(236,242,245,0.03)" stroke="rgba(236,242,245,0.12)" stroke-width="0.8"/>
+        <rect x="56" y="64" width="144" height="12" rx="2" fill="#0A1014"/>
+        <text x="128" y="73" fill="#8499A6" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.14em">NASA &amp; ARCHIVE SOURCES</text>
+
+        <rect x="336" y="240" width="348" height="252" rx="8"
+              fill="rgba(236,242,245,0.03)" stroke="rgba(236,242,245,0.12)" stroke-width="0.8"/>
+        <rect x="440" y="244" width="140" height="12" rx="2" fill="#0A1014"/>
+        <text x="510" y="253" fill="#8499A6" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.14em">SCIENTIFIC ENGINES</text>
+
+        <!-- Arrows first (drawn behind nodes) -->
+        <!-- 1. NASA FIRMS API -> Express Server -->
+        <line x1="200" y1="124" x2="420" y2="124" stroke="#61BDE0" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- 2. NASA EONET v3 -> Express Server -->
+        <path d="M 200,220 H 284 Q 292,220 292,212 V 156 Q 292,148 300,148 H 420"
+              fill="none" stroke="#61BDE0" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- 3. Local Archives -> Express Server -->
+        <path d="M 200,316 H 308 Q 316,316 316,308 V 180 Q 316,172 324,172 H 420"
+              fill="none" stroke="#B2C2CC" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- 4. Express Server -> Guardrails -->
+        <path d="M 480,188 V 212 Q 480,220 472,220 H 404 Q 396,220 396,228 V 272"
+              fill="none" stroke="#B2C2CC" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 5. Express Server -> Period & Grid -->
+        <path d="M 540,188 V 212 Q 540,220 548,220 H 616 Q 624,220 624,228 V 272"
+              fill="none" stroke="#B2C2CC" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- 6. Guardrails -> M3 Harmonizer -->
+        <path d="M 396,336 V 364 Q 396,372 404,372 H 472 Q 480,372 480,380 V 404"
+              fill="none" stroke="#B2C2CC" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 7. Period & Grid -> M3 Harmonizer -->
+        <path d="M 624,336 V 364 Q 624,372 616,372 H 548 Q 540,372 540,380 V 404"
+              fill="none" stroke="#B2C2CC" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- 8. Express Server -> React 19 Workspace (headline payload) -->
+        <line x1="600" y1="140" x2="740" y2="140" stroke="#F0783C" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+
+        <!-- 9. React 19 Workspace -> M3 Harmonizer (client co-location inspection, dashed) -->
+        <path d="M 830,188 V 428 Q 830,436 822,436 H 600"
+              fill="none" stroke="#B2C2CC" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+        <!-- Arrow labels (opaque paper mask, 6-10px above stroke) -->
+        <rect x="276" y="104" width="56" height="12" rx="2" fill="#0A1014"/>
+        <text x="304" y="113" fill="#61BDE0" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">HTTPS CSV</text>
+
+        <rect x="228" y="200" width="52" height="12" rx="2" fill="#0A1014"/>
+        <text x="254" y="209" fill="#61BDE0" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">EONET V3</text>
+
+        <rect x="232" y="296" width="68" height="12" rx="2" fill="#0A1014"/>
+        <text x="266" y="305" fill="#8499A6" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">DUCKDB / GZ</text>
+
+        <rect x="416" y="200" width="44" height="12" rx="2" fill="#0A1014"/>
+        <text x="438" y="209" fill="#8499A6" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">DEDUP</text>
+
+        <rect x="552" y="200" width="60" height="12" rx="2" fill="#0A1014"/>
+        <text x="582" y="209" fill="#8499A6" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">AGGREGATE</text>
+
+        <rect x="408" y="352" width="60" height="12" rx="2" fill="#0A1014"/>
+        <text x="438" y="361" fill="#8499A6" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">CALIBRATE</text>
+
+        <rect x="560" y="352" width="44" height="12" rx="2" fill="#0A1014"/>
+        <text x="582" y="361" fill="#8499A6" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">SERIES</text>
+
+        <rect x="632" y="120" width="76" height="12" rx="2" fill="#0A1014"/>
+        <text x="670" y="129" fill="#F0783C" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">/API/V1 JSON</text>
+
+        <rect x="728" y="416" width="60" height="12" rx="2" fill="#0A1014"/>
+        <text x="758" y="425" fill="#8499A6" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace"
+              text-anchor="middle" letter-spacing="0.06em">CO-LOCATE</text>
+
+        <!-- Nodes -->
+        <!-- Node 1: NASA FIRMS Feeds (external) -->
+        <rect x="56" y="92" width="144" height="64" rx="6" fill="#0A1014"/>
+        <rect x="56" y="92" width="144" height="64" rx="6" fill="rgba(236,242,245,0.03)" stroke="rgba(236,242,245,0.30)" stroke-width="1"/>
+        <rect x="64" y="100" width="28" height="12" rx="2" fill="none" stroke="rgba(236,242,245,0.25)" stroke-width="0.8"/>
+        <text x="78" y="109" fill="#8499A6" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+        <text x="128" y="128" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">NASA FIRMS Feeds</text>
+        <text x="128" y="144" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">24h CSV · Area v4</text>
+
+        <!-- Node 2: NASA EONET v3 (external) -->
+        <rect x="56" y="188" width="144" height="64" rx="6" fill="#0A1014"/>
+        <rect x="56" y="188" width="144" height="64" rx="6" fill="rgba(236,242,245,0.03)" stroke="rgba(236,242,245,0.30)" stroke-width="1"/>
+        <rect x="64" y="196" width="28" height="12" rx="2" fill="none" stroke="rgba(236,242,245,0.25)" stroke-width="0.8"/>
+        <text x="78" y="205" fill="#8499A6" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+        <text x="128" y="224" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">NASA EONET v3</text>
+        <text x="128" y="240" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">wildfires · events</text>
+
+        <!-- Node 3: Local Archives (store) -->
+        <rect x="56" y="284" width="144" height="64" rx="6" fill="#0A1014"/>
+        <rect x="56" y="284" width="144" height="64" rx="6" fill="rgba(236,242,245,0.05)" stroke="#B2C2CC" stroke-width="1"/>
+        <rect x="64" y="292" width="36" height="12" rx="2" fill="none" stroke="rgba(178,194,204,0.45)" stroke-width="0.8"/>
+        <text x="82" y="301" fill="#B2C2CC" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+        <text x="128" y="320" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">Local Archives</text>
+        <text x="128" y="336" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">Parquet 8.91M · 692k</text>
+
+        <!-- Node 4: Express Server (focal 1) -->
+        <rect x="420" y="92" width="180" height="96" rx="6" fill="#0A1014"/>
+        <rect x="420" y="92" width="180" height="96" rx="6" fill="rgba(240,120,60,0.10)" stroke="#F0783C" stroke-width="1"/>
+        <rect x="428" y="100" width="28" height="12" rx="2" fill="none" stroke="rgba(240,120,60,0.50)" stroke-width="0.8"/>
+        <text x="442" y="109" fill="#F0783C" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+        <text x="592" y="180" fill="rgba(240,120,60,0.14)" font-size="32" font-weight="600" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="end">01</text>
+        <text x="510" y="140" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">Express API Server</text>
+        <text x="510" y="156" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">server.ts · /api/v1/*</text>
+
+        <!-- Node 5: Guardrails (backend) -->
+        <rect x="352" y="272" width="144" height="64" rx="6" fill="#0A1014"/>
+        <rect x="352" y="272" width="144" height="64" rx="6" fill="#16222B" stroke="#ECF2F5" stroke-width="1"/>
+        <rect x="360" y="280" width="36" height="12" rx="2" fill="none" stroke="rgba(236,242,245,0.40)" stroke-width="0.8"/>
+        <text x="378" y="289" fill="#ECF2F5" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">M0/M1</text>
+        <text x="424" y="308" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">Guardrails</text>
+        <text x="424" y="324" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">fireScience.ts</text>
+
+        <!-- Node 6: Period & Grid (backend) -->
+        <rect x="524" y="272" width="144" height="64" rx="6" fill="#0A1014"/>
+        <rect x="524" y="272" width="144" height="64" rx="6" fill="#16222B" stroke="#ECF2F5" stroke-width="1"/>
+        <rect x="532" y="280" width="24" height="12" rx="2" fill="none" stroke="rgba(236,242,245,0.40)" stroke-width="0.8"/>
+        <text x="544" y="289" fill="#ECF2F5" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">M2</text>
+        <text x="596" y="308" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">Period &amp; Grid</text>
+        <text x="596" y="324" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">comparisonScience.ts</text>
+
+        <!-- Node 7: M3 Harmonizer (focal 2) -->
+        <rect x="420" y="404" width="180" height="64" rx="6" fill="#0A1014"/>
+        <rect x="420" y="404" width="180" height="64" rx="6" fill="rgba(240,120,60,0.10)" stroke="#F0783C" stroke-width="1"/>
+        <rect x="428" y="412" width="24" height="12" rx="2" fill="none" stroke="rgba(240,120,60,0.50)" stroke-width="0.8"/>
+        <text x="440" y="421" fill="#F0783C" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">M3</text>
+        <text x="592" y="428" fill="rgba(240,120,60,0.14)" font-size="22" font-weight="600" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="end">02</text>
+        <text x="510" y="440" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">M3 Harmonizer</text>
+        <text x="510" y="456" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">harmonizationScience.ts</text>
+
+        <!-- Node 8: React 19 Workspace (input/client) -->
+        <rect x="740" y="92" width="180" height="96" rx="6" fill="#0A1014"/>
+        <rect x="740" y="92" width="180" height="96" rx="6" fill="rgba(178,194,204,0.10)" stroke="#8499A6" stroke-width="1"/>
+        <rect x="748" y="100" width="40" height="12" rx="2" fill="none" stroke="rgba(132,153,166,0.45)" stroke-width="0.8"/>
+        <text x="768" y="109" fill="#8499A6" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CLIENT</text>
+        <text x="830" y="140" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">React 19 Workspace</text>
+        <text x="830" y="156" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">Map · Calendar · Compare</text>
+
+        <!-- Legend strip -->
+        <line x1="40" y1="516" x2="920" y2="516" stroke="rgba(236,242,245,0.12)" stroke-width="0.8"/>
+        <text x="40" y="536" fill="#B2C2CC" font-size="8" font-family="'IBM Plex Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+
+        <rect x="40" y="552" width="14" height="10" rx="2" fill="rgba(240,120,60,0.10)" stroke="#F0783C" stroke-width="1"/>
+        <text x="60" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">Focal core</text>
+
+        <rect x="148" y="552" width="14" height="10" rx="2" fill="#16222B" stroke="#ECF2F5" stroke-width="1"/>
+        <text x="168" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">Science engine</text>
+
+        <rect x="276" y="552" width="14" height="10" rx="2" fill="rgba(236,242,245,0.05)" stroke="#B2C2CC" stroke-width="1"/>
+        <text x="296" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">Archive store</text>
+
+        <rect x="396" y="552" width="14" height="10" rx="2" fill="rgba(236,242,245,0.03)" stroke="rgba(236,242,245,0.30)" stroke-width="1"/>
+        <text x="416" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">NASA API</text>
+
+        <rect x="496" y="552" width="14" height="10" rx="2" fill="rgba(178,194,204,0.10)" stroke="#8499A6" stroke-width="1"/>
+        <text x="516" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">Browser UI</text>
+
+        <line x1="604" y1="557" x2="628" y2="557" stroke="#61BDE0" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <text x="636" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">External feed</text>
+
+        <line x1="736" y1="557" x2="760" y2="557" stroke="#B2C2CC" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+        <text x="768" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">Client inspection</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>
