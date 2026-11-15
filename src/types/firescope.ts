@@ -431,6 +431,10 @@ export interface PeriodBinValue {
   label: string;
   modis_detections: number | null;
   viirs_detections: number | null;
+  modis_expected_satellites?: number;
+  viirs_expected_satellites?: number;
+  modis_per_satellite?: number | null;
+  viirs_per_satellite?: number | null;
   modis_frp_sum_mw: number | null;
   modis_frp_mean_mw: number | null;
   viirs_frp_sum_mw: number | null;
@@ -447,6 +451,8 @@ export interface PeriodComparisonRow {
   period_b: PeriodBinValue | null;
   modis_delta: number | null;
   viirs_delta: number | null;
+  modis_per_satellite_delta?: number | null;
+  viirs_per_satellite_delta?: number | null;
 }
 
 export interface YoyYearSummary {
@@ -455,6 +461,10 @@ export interface YoyYearSummary {
   end_date: string;
   modis_detections: number;
   viirs_detections: number;
+  modis_expected_satellites?: number;
+  viirs_expected_satellites?: number;
+  modis_per_satellite?: number;
+  viirs_per_satellite?: number;
   modis_frp_sum_mw: number | null;
   modis_frp_mean_mw: number | null;
   viirs_frp_sum_mw: number | null;
@@ -487,6 +497,18 @@ export interface PeriodComparisonResponse {
     period_b_viirs: number;
     viirs_delta: number;
     viirs_pct_change: number | null;
+    period_a_modis_satellites?: number;
+    period_b_modis_satellites?: number;
+    period_a_modis_per_satellite?: number | null;
+    period_b_modis_per_satellite?: number | null;
+    modis_per_satellite_delta?: number | null;
+    modis_per_satellite_pct_change?: number | null;
+    period_a_viirs_satellites?: number;
+    period_b_viirs_satellites?: number;
+    period_a_viirs_per_satellite?: number | null;
+    period_b_viirs_per_satellite?: number | null;
+    viirs_per_satellite_delta?: number | null;
+    viirs_per_satellite_pct_change?: number | null;
     period_a_modis_frp_mean_mw: number | null;
     period_b_modis_frp_mean_mw: number | null;
     period_a_viirs_frp_mean_mw: number | null;

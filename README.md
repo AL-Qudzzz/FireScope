@@ -32,7 +32,7 @@
 | **Global Presets NASA Archive** | `692,671` real NASA FIRMS Area API observations (`261,471` daily buckets across 4 global fire regimes, `2024` to `2026`) |
 | **Live Global Feeds** | Real-time 24h NASA FIRMS CSV streams (`MODIS C6.1`, `VIIRS NOAA-20`, `NOAA-21`, `S-NPP`) + NASA EONET v3 wildfires |
 | **Analytical Methods** | `M0_RAW`, `M1_AGGREGATED`, `M2_COMPARATIVE`, Spatiotemporal Co-Location, and gated `M3_EMPIRICAL_PLATFORM_BRIDGE` (off by default) |
-| **Automated Test Suite** | `36 / 36` unit, DuckDB integration, and API regression tests passing in [`src/science/fireScience.test.ts`](./src/science/fireScience.test.ts) |
+| **Automated Test Suite** | `40 / 40` unit, DuckDB integration, and API regression tests passing in [`src/science/fireScience.test.ts`](./src/science/fireScience.test.ts) |
 
 ---
 
@@ -116,7 +116,7 @@ All datasets in [`server.ts`](./server.ts) maintain strict date-boundary separat
 
 | AOI ID | Region | Area (`sq km`) | Primary Historical Data Source |
 |---|---|---|---|
-| `global-world` | Global World View (All Countries) | `510,072,000` | Global Presets NASA Archive (4 biomes) + Live 24h NASA FIRMS global feeds |
+| `global-world` | Global World View (All Countries) | `510,072,000` | Global Presets NASA Archive (4 biomes) + Indonesia Parquet Archive (covered multi-year windows) + Live 24h NASA FIRMS global feeds |
 | `indonesia-archipelago` | Indonesia Archipelago (Full Extent) | `1,904,569` | DuckDB Parquet (`2001` to `2026`, `8.91M` records) + Live 24h FIRMS |
 | `kalimantan-peat` | Central Kalimantan Peatlands, Indonesia | `31,120` | DuckDB Parquet (`2001` to `2026`) + Live 24h FIRMS |
 | `california-sierra` | Northern Sierra & Sacramento Foothills, USA | `24,180` | Real NASA Area Archive (`3,025` rows across Oct-Nov `2024..2026`) + Live/Area API |
@@ -129,9 +129,9 @@ All datasets in [`server.ts`](./server.ts) maintain strict date-boundary separat
 - **Confidence Semantics Preserved:** MODIS `0-100` numeric confidence and VIIRS `low | nominal | high` categories are filtered independently (`modis_min_confidence`, `viirs_categories`) and never forced onto a shared numerical score.
 - **Pre-Aggregated Parquet FRP Semantics:** Multi-day/month Parquet aggregate bins compute exact `sum_mw`, `mean_mw`, and `max_mw`, returning `median_mw: null` and `p90_mw: null` (`N/A (daily agg)` in UI) rather than interpolating medians from pre-bucketed sums.
 - **Known Scope Notes for Full Transparency:**
-  - When selecting `global-world`, historical non-live calendar queries aggregate the 4 seeded global preset archives (`692,671` records across `2024-10-15..2024-11-14`, `2025-10-15..2025-11-14`, and `2026-10-01..2026-11-15`) plus live 24h global feeds; dates outside covered windows expose `coveredDateWindows` and report `NO_SOURCE_DATA` rather than false zero counts. Indonesia's `8.91M` multi-decade Parquet archive is active for `indonesia-archipelago`, `kalimantan-peat`, and custom AOIs inside Indonesia (`isAoiInParquetCoverage`).
+  - When selecting `global-world`, historical non-live calendar, YoY comparison, and observation queries combine the 4 seeded global preset archives (`692,671` records across `2024-10-15..2024-11-14`, `2025-10-15..2025-11-14`, and `2026-10-01..2026-11-15`) with Indonesia's `8.91M` Parquet archive across those covered multi-year windows (plus live 24h global feeds); dates outside covered global windows expose `coveredDateWindows` and report `NO_SOURCE_DATA` rather than false zero counts. Indonesia's full multi-decade Parquet timeline is also directly active for `indonesia-archipelago`, `kalimantan-peat`, and custom AOIs inside Indonesia (`isAoiInParquetCoverage`).
   - Map layers explicitly surface `spatial_provenance` (`FULL_ARCHIVE`, `PRESET_SAMPLE_INDEX`, `LIVE_STREAM`, `EONET_CONTEXT_ONLY`) so sampled global preset points or EONET overlays are never misread as full-density global inventories.
-  - `generateProvenanceCsv` in [`src/services/firescopeApi.ts`](./src/services/firescopeApi.ts) exports per-sensor/platform counts, FRP summaries, baseline statuses, and unweighted pooled sums without emitting M3 normalized metrics (`M1`/`M2` compliant).
+  - `generateProvenanceCsv` in [`src/services/firescopeApi.ts`](./src/services/firescopeApi.ts) and the hover/focus inspector in [`CalendarHeatmap.tsx`](./src/components/CalendarHeatmap.tsx) expose constellation-normalized per-satellite rates (`Y_s / K_s`, plus `modis_active_satellites` and `viirs_active_satellites` in CSV) alongside raw per-sensor counts; optional M3 columns (`m3_bridged_modis_equiv`, `m3_bridged_lower_80`, `m3_bridged_upper_80`, `m3_bridged_source`, `m3_viirs_calibrated_modis_equiv`) and M3 Bridge inspector readouts are emitted only when `analytics.harmonization` is active (`ENABLE_EXPERIMENTAL_M3=true`).
 
 ---
 
@@ -145,7 +145,7 @@ All datasets in [`server.ts`](./server.ts) maintain strict date-boundary separat
   - `SensorComparisonChart` defaults strictly to `Sensor Series (MODIS vs VIIRS)` and `5-Platform Split` (exposing `Harmonized Bridge (M3)` only when `ENABLE_EXPERIMENTAL_M3=true`).
   - `SelectedBinDetail` & `ObservationInspector` expose native confidence values, per-sensor FRP summaries, `Cross-Sensor Co-Location` cluster breakdowns, paginated individual detections, and SHA-256 provenance.
 - **Historical & Multi-Region Comparison ([`ComparisonPanels.tsx`](./src/components/ComparisonPanels.tsx)):**
-  - **Compare History (`FR-08`):** Like-for-like UTC window comparison (`2015` vs `2023`, `Jul-Nov 2025` vs `2026`, or custom windows) with leap-day (`02-29`) alignment, multi-year YoY tables, era-transition warnings, and CSV export.
+  - **Compare History (`FR-08`):** Like-for-like UTC window comparison (`2015` vs `2023`, `Jul-Nov 2025` vs `2026`, or custom windows) with leap-day (`02-29`) alignment, constellation-normalized per-satellite rates (`Y_s / K_s`), multi-year YoY tables, era-transition warnings, and CSV export.
   - **Compare Regions:** Side-by-side comparison of two AOIs over identical UTC windows showing both raw counts and area-normalized detections per `1,000 sq km` with unequal-area cautions.
 - **UI Architecture & UX Reliability ([`GlobalHeader.tsx`](./src/components/GlobalHeader.tsx), [`ProgressiveDisclosure.tsx`](./src/components/ProgressiveDisclosure.tsx), [`ReferencePages.tsx`](./src/components/ReferencePages.tsx)):**
   - Light (`Field Atlas`) and Dark (`Night Orbit`) themes defined via CSS custom properties in [`src/index.css`](./src/index.css).
@@ -206,7 +206,7 @@ All datasets in [`server.ts`](./server.ts) maintain strict date-boundary separat
     │   ├── fireScience.ts                 # M0/M1 UTC parsing, AOI bounds, NRT->STD supersession, FRP, offshore mask
     │   ├── comparisonScience.ts           # M2 FR-08 YoY, FR-09 Median/MAD, Multi-AOI comparison, grid aggregation
     │   ├── harmonizationScience.ts        # M3 K_s(t) normalization, OLS log bridge, holdout eval, co-location
-    │   └── fireScience.test.ts            # 36 automated unit, DuckDB, and API regression tests
+    │   └── fireScience.test.ts            # 40 automated unit, DuckDB, and API regression tests
     ├── services/
     │   ├── parquetService.ts              # DuckDB read-only queries over data/processed/*.parquet
     │   ├── globalPresetsService.ts        # In-memory loader and queries over global_presets_nasa.json.gz
@@ -304,7 +304,7 @@ NODE_ENV=production npm start
 | Check | Command | Verified Coverage |
 |---|---|---|
 | **TypeScript Typecheck** | `npm run lint` | Runs `tsc --noEmit` across frontend and backend code (`0` type errors) |
-| **Scientific & Integration Tests** | `npm test` | Runs `tsx --test src/science/fireScience.test.ts` (`36 / 36` tests passing: UTC parsing, confidence isolation, AOI bounds, NRT supersession, FRP bounds, FR-08 YoY & leap days, FR-09 Median/MAD & pre-2012 filtering, Multi-AOI density, DuckDB Parquet queries & concurrency, 0.25 deg grid additivity, offshore flare filter, CSV sanitization, M3 opt-in gate, spatiotemporal co-location clustering & full-bin concordance, compressed global archive loading, and HTTP API provenance/boundary regression tests) |
+| **Scientific & Integration Tests** | `npm test` | Runs `tsx --test src/science/fireScience.test.ts` (`40 / 40` tests passing: UTC parsing, confidence isolation, AOI bounds, NRT supersession, FRP bounds, FR-08 YoY, leap days & per-satellite rates, FR-09 Median/MAD & pre-2012 filtering, Multi-AOI density, DuckDB Parquet queries & concurrency, 0.25 deg grid additivity, offshore flare filter, CSV sanitization & conditional M3 columns, M3 opt-in gate, spatiotemporal co-location clustering & full-bin concordance, compressed global archive + `global-world` Indonesia merge, CalendarHeatmap per-satellite alignment, and HTTP API provenance/boundary regression tests) |
 | **Production Bundle** | `npm run build` | Builds static Vite production bundle into `dist/` |
 
 ---

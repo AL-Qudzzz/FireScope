@@ -24,6 +24,7 @@ import {
   generateAoiComparisonCsv,
   generatePeriodComparisonCsv,
 } from '../science/comparisonScience';
+import { getExpectedActivePlatforms } from '../science/harmonizationScience';
 import { fetchLiveEonetObservations } from './eonetLiveService';
 
 export { generateAoiComparisonCsv, generatePeriodComparisonCsv };
@@ -528,6 +529,7 @@ function escapeCsvCell(value: string): string {
 }
 
 export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): string {
+  const h = analytics.harmonization;
   const headerComments = [
     `# FireScope Analytical Export — Active-Fire Observation Activity`,
     `# Data Mode: ${analytics.data_mode} (${analytics.demo_notice})`,
@@ -543,6 +545,19 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
     `# Retrieved At (UTC): ${analytics.provenance.retrieved_at_utc} | Latest Acquisition (UTC): ${analytics.provenance.latest_acquisition_utc}`,
     `# Raw File SHA-256 Checksums: ${analytics.provenance.archive_checksums.join(', ')}`,
   ];
+
+  if (h) {
+    headerComments.push(
+      `# M3 Harmonization Method: ${h.diagnostics.method_id} v${h.diagnostics.method_version} (${h.diagnostics.calibration_mode})`,
+      `# M3 Formula: ${h.diagnostics.formula_summary}`,
+      `# M3 Diagnostics: overlap_bins=${h.diagnostics.active_overlap_bin_count}, per_sat_median_ratio=${h.diagnostics.per_platform_median_ratio ?? 'N/A'}, log_r2=${h.diagnostics.log_r_squared ?? 'N/A'}, validation=${h.diagnostics.validation_scheme}, holdout_mae=${h.diagnostics.holdout_mae ?? 'N/A'}, holdout_rmse=${h.diagnostics.holdout_rmse ?? 'N/A'}`,
+      `# M3 Caveat: ${h.diagnostics.scientific_caveat}`
+    );
+  }
+
+  const m3PointMap = h
+    ? new Map(h.points.map((p) => [p.bin_key, p]))
+    : null;
 
   const columns = [
     'bin_key',
@@ -566,31 +581,75 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
     'modis_baseline_status',
     'viirs_baseline_status',
     'coverage_note',
+    'modis_active_satellites',
+    'viirs_active_satellites',
+    'modis_per_satellite',
+    'viirs_per_satellite',
+    ...(h
+      ? [
+          'm3_bridged_modis_equiv',
+          'm3_bridged_lower_80',
+          'm3_bridged_upper_80',
+          'm3_bridged_source',
+          'm3_viirs_calibrated_modis_equiv',
+        ]
+      : []),
   ];
 
-  const rows = analytics.series.map((b) => [
-    b.bin_key,
-    b.time_bin_start_utc,
-    b.time_bin_end_utc,
-    b.coverage_state,
-    b.values.MODIS ?? 'NO_SOURCE_DATA',
-    b.values.VIIRS ?? 'NO_SOURCE_DATA',
-    b.pooled_observation_count ?? 'NO_SOURCE_DATA',
-    b.platform_breakdown.TERRA,
-    b.platform_breakdown.AQUA,
-    b.platform_breakdown.SNPP,
-    b.platform_breakdown.NOAA20,
-    b.platform_breakdown.NOAA21,
-    b.frp_summary.MODIS.sum_mw ?? '',
-    b.frp_summary.MODIS.mean_mw ?? '',
-    b.frp_summary.MODIS.valid_count,
-    b.frp_summary.VIIRS.sum_mw ?? '',
-    b.frp_summary.VIIRS.mean_mw ?? '',
-    b.frp_summary.VIIRS.valid_count,
-    escapeCsvCell(b.seasonal_baseline?.MODIS.status_label ?? ''),
-    escapeCsvCell(b.seasonal_baseline?.VIIRS.status_label ?? ''),
-    escapeCsvCell(b.quality.coverage_note),
-  ]);
+  const rows = analytics.series.map((b) => {
+    const exp = getExpectedActivePlatforms(
+      b.time_bin_start_utc,
+      b.time_bin_end_utc,
+      analytics.query.platforms,
+      b.platform_breakdown
+    );
+    const modisPerSat =
+      b.values.MODIS !== null && exp.modis > 0
+        ? Number((b.values.MODIS / exp.modis).toFixed(1))
+        : '';
+    const viirsPerSat =
+      b.values.VIIRS !== null && exp.viirs > 0
+        ? Number((b.values.VIIRS / exp.viirs).toFixed(1))
+        : '';
+    const m3Pt = m3PointMap?.get(b.bin_key);
+
+    return [
+      b.bin_key,
+      b.time_bin_start_utc,
+      b.time_bin_end_utc,
+      b.coverage_state,
+      b.values.MODIS ?? 'NO_SOURCE_DATA',
+      b.values.VIIRS ?? 'NO_SOURCE_DATA',
+      b.pooled_observation_count ?? 'NO_SOURCE_DATA',
+      b.platform_breakdown.TERRA,
+      b.platform_breakdown.AQUA,
+      b.platform_breakdown.SNPP,
+      b.platform_breakdown.NOAA20,
+      b.platform_breakdown.NOAA21,
+      b.frp_summary.MODIS.sum_mw ?? '',
+      b.frp_summary.MODIS.mean_mw ?? '',
+      b.frp_summary.MODIS.valid_count,
+      b.frp_summary.VIIRS.sum_mw ?? '',
+      b.frp_summary.VIIRS.mean_mw ?? '',
+      b.frp_summary.VIIRS.valid_count,
+      escapeCsvCell(b.seasonal_baseline?.MODIS.status_label ?? ''),
+      escapeCsvCell(b.seasonal_baseline?.VIIRS.status_label ?? ''),
+      escapeCsvCell(b.quality.coverage_note),
+      exp.modis,
+      exp.viirs,
+      modisPerSat,
+      viirsPerSat,
+      ...(h
+        ? [
+            m3Pt?.bridged_modis_equiv ?? '',
+            m3Pt?.bridged_lower_80 ?? '',
+            m3Pt?.bridged_upper_80 ?? '',
+            escapeCsvCell(m3Pt?.bridged_source ?? ''),
+            m3Pt?.viirs_calibrated_modis_equiv ?? '',
+          ]
+        : []),
+    ];
+  });
 
   return [...headerComments, columns.join(','), ...rows.map((r) => r.join(','))].join('\n');
 }

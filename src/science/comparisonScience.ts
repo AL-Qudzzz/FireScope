@@ -31,6 +31,7 @@ import {
 import {
   computeBucketSpatialConcordance,
   computeHarmonizedSeries,
+  getExpectedActivePlatforms,
 } from './harmonizationScience';
 
 /**
@@ -673,16 +674,35 @@ export function aggregateCalendarFromBuckets(params: {
   };
 }
 
-function toPeriodBinValue(bin: CalendarBinRecord): PeriodBinValue {
+function toPeriodBinValue(
+  bin: CalendarBinRecord,
+  selectedPlatforms?: PlatformId[]
+): PeriodBinValue {
   const statuses: ProcessingStatus[] = [];
   for (const st of ['STANDARD', 'NRT', 'RT', 'URT'] as ProcessingStatus[]) {
     if ((bin.processing_breakdown[st] ?? 0) > 0) statuses.push(st);
   }
+  const expected = getExpectedActivePlatforms(
+    bin.time_bin_start_utc,
+    bin.time_bin_end_utc,
+    selectedPlatforms,
+    bin.platform_breakdown
+  );
   return {
     bin_key: bin.bin_key,
     label: bin.label,
     modis_detections: bin.values.MODIS,
     viirs_detections: bin.values.VIIRS,
+    modis_expected_satellites: expected.modis,
+    viirs_expected_satellites: expected.viirs,
+    modis_per_satellite:
+      bin.values.MODIS !== null && expected.modis > 0
+        ? Number((bin.values.MODIS / expected.modis).toFixed(1))
+        : null,
+    viirs_per_satellite:
+      bin.values.VIIRS !== null && expected.viirs > 0
+        ? Number((bin.values.VIIRS / expected.viirs).toFixed(1))
+        : null,
     modis_frp_sum_mw: bin.frp_summary.MODIS.sum_mw,
     modis_frp_mean_mw: bin.frp_summary.MODIS.mean_mw,
     viirs_frp_sum_mw: bin.frp_summary.VIIRS.sum_mw,
@@ -691,6 +711,38 @@ function toPeriodBinValue(bin: CalendarBinRecord): PeriodBinValue {
     active_platforms: bin.quality.active_platforms,
     processing_statuses: statuses,
   };
+}
+
+function sumPeriodPerSatellite(
+  calendar: CalendarAnalyticsResponse,
+  sensor: 'MODIS' | 'VIIRS',
+  rawTotal: number,
+  fallbackExpectedSats: number
+): number | null {
+  let coveredBins = 0;
+  let rateSum = 0;
+  for (const b of calendar.series) {
+    const val = b.values[sensor];
+    if (val === null) continue;
+    const exp = getExpectedActivePlatforms(
+      b.time_bin_start_utc,
+      b.time_bin_end_utc,
+      calendar.query.platforms,
+      b.platform_breakdown
+    );
+    const k = sensor === 'MODIS' ? exp.modis : exp.viirs;
+    if (k > 0) {
+      coveredBins += 1;
+      rateSum += val / k;
+    }
+  }
+  if (coveredBins > 0) {
+    return Number(rateSum.toFixed(1));
+  }
+  if (fallbackExpectedSats > 0) {
+    return Number((rawTotal / fallbackExpectedSats).toFixed(1));
+  }
+  return null;
 }
 
 /**
@@ -744,8 +796,8 @@ export function buildPeriodComparisonResponse(params: {
       alignedLabel = (binA ?? binB)!.bin_key.slice(5);
     }
 
-    const valA = binA ? toPeriodBinValue(binA) : null;
-    const valB = binB ? toPeriodBinValue(binB) : null;
+    const valA = binA ? toPeriodBinValue(binA, periodA.query.platforms) : null;
+    const valB = binB ? toPeriodBinValue(binB, periodB.query.platforms) : null;
 
     const modisDelta =
       valA?.modis_detections !== null &&
@@ -763,6 +815,18 @@ export function buildPeriodComparisonResponse(params: {
         ? valB.viirs_detections - valA.viirs_detections
         : null;
 
+    const modisPerSatDelta =
+      typeof valA?.modis_per_satellite === 'number' &&
+      typeof valB?.modis_per_satellite === 'number'
+        ? Number((valB.modis_per_satellite - valA.modis_per_satellite).toFixed(1))
+        : null;
+
+    const viirsPerSatDelta =
+      typeof valA?.viirs_per_satellite === 'number' &&
+      typeof valB?.viirs_per_satellite === 'number'
+        ? Number((valB.viirs_per_satellite - valA.viirs_per_satellite).toFixed(1))
+        : null;
+
     alignedSeries.push({
       aligned_index: i,
       aligned_label: alignedLabel,
@@ -770,6 +834,8 @@ export function buildPeriodComparisonResponse(params: {
       period_b: valB,
       modis_delta: modisDelta,
       viirs_delta: viirsDelta,
+      modis_per_satellite_delta: modisPerSatDelta,
+      viirs_per_satellite_delta: viirsPerSatDelta,
     });
   }
 
@@ -777,6 +843,65 @@ export function buildPeriodComparisonResponse(params: {
   const pBModis = periodB.totals.MODIS_detections;
   const pAViirs = periodA.totals.VIIRS_detections;
   const pBViirs = periodB.totals.VIIRS_detections;
+
+  const expPeriodA = getExpectedActivePlatforms(
+    periodA.query.start_date,
+    periodA.query.end_date,
+    periodA.query.platforms,
+    periodA.totals.platform_totals
+  );
+  const expPeriodB = getExpectedActivePlatforms(
+    periodB.query.start_date,
+    periodB.query.end_date,
+    periodB.query.platforms,
+    periodB.totals.platform_totals
+  );
+
+  const pAModisPerSat = sumPeriodPerSatellite(periodA, 'MODIS', pAModis, expPeriodA.modis);
+  const pBModisPerSat = sumPeriodPerSatellite(periodB, 'MODIS', pBModis, expPeriodB.modis);
+  const pAViirsPerSat = sumPeriodPerSatellite(periodA, 'VIIRS', pAViirs, expPeriodA.viirs);
+  const pBViirsPerSat = sumPeriodPerSatellite(periodB, 'VIIRS', pBViirs, expPeriodB.viirs);
+
+  const modisPerSatDelta =
+    pAModisPerSat !== null && pBModisPerSat !== null
+      ? Number((pBModisPerSat - pAModisPerSat).toFixed(1))
+      : null;
+  const modisPerSatPct =
+    pAModisPerSat !== null && pAModisPerSat > 0 && pBModisPerSat !== null
+      ? Number((((pBModisPerSat - pAModisPerSat) / pAModisPerSat) * 100).toFixed(1))
+      : null;
+
+  const viirsPerSatDelta =
+    pAViirsPerSat !== null && pBViirsPerSat !== null
+      ? Number((pBViirsPerSat - pAViirsPerSat).toFixed(1))
+      : null;
+  const viirsPerSatPct =
+    pAViirsPerSat !== null && pAViirsPerSat > 0 && pBViirsPerSat !== null
+      ? Number((((pBViirsPerSat - pAViirsPerSat) / pAViirsPerSat) * 100).toFixed(1))
+      : null;
+
+  const enrichedYoySummary: YoyYearSummary[] = yoySummary.map((yr) => {
+    const hasModisRate = typeof yr.modis_per_satellite === 'number';
+    const hasViirsRate = typeof yr.viirs_per_satellite === 'number';
+    if (hasModisRate && hasViirsRate) return yr;
+    const exp = getExpectedActivePlatforms(
+      yr.start_date,
+      yr.end_date,
+      periodB.query.platforms,
+      undefined
+    );
+    return {
+      ...yr,
+      modis_expected_satellites: yr.modis_expected_satellites ?? exp.modis,
+      viirs_expected_satellites: yr.viirs_expected_satellites ?? exp.viirs,
+      modis_per_satellite:
+        yr.modis_per_satellite ??
+        (exp.modis > 0 ? Number((yr.modis_detections / exp.modis).toFixed(1)) : 0),
+      viirs_per_satellite:
+        yr.viirs_per_satellite ??
+        (exp.viirs > 0 ? Number((yr.viirs_detections / exp.viirs).toFixed(1)) : 0),
+    };
+  });
 
   const warnings: string[] = [];
   const platformsA = new Set<PlatformId>();
@@ -839,6 +964,18 @@ export function buildPeriodComparisonResponse(params: {
       viirs_delta: pBViirs - pAViirs,
       viirs_pct_change:
         pAViirs > 0 ? Number((((pBViirs - pAViirs) / pAViirs) * 100).toFixed(1)) : null,
+      period_a_modis_satellites: expPeriodA.modis,
+      period_b_modis_satellites: expPeriodB.modis,
+      period_a_modis_per_satellite: pAModisPerSat,
+      period_b_modis_per_satellite: pBModisPerSat,
+      modis_per_satellite_delta: modisPerSatDelta,
+      modis_per_satellite_pct_change: modisPerSatPct,
+      period_a_viirs_satellites: expPeriodA.viirs,
+      period_b_viirs_satellites: expPeriodB.viirs,
+      period_a_viirs_per_satellite: pAViirsPerSat,
+      period_b_viirs_per_satellite: pBViirsPerSat,
+      viirs_per_satellite_delta: viirsPerSatDelta,
+      viirs_per_satellite_pct_change: viirsPerSatPct,
       period_a_modis_frp_mean_mw: periodA.totals.MODIS_frp.mean_mw,
       period_b_modis_frp_mean_mw: periodB.totals.MODIS_frp.mean_mw,
       period_a_viirs_frp_mean_mw: periodA.totals.VIIRS_frp.mean_mw,
@@ -846,7 +983,7 @@ export function buildPeriodComparisonResponse(params: {
     },
     availability_warnings: warnings,
     aligned_series: alignedSeries,
-    yoy_summary: yoySummary,
+    yoy_summary: enrichedYoySummary,
     method: {
       id: 'M2_COMPARATIVE',
       version: '1.0.0',
@@ -1142,6 +1279,12 @@ export function generatePeriodComparisonCsv(comp: PeriodComparisonResponse): str
     'period_b_viirs_frp_mean_mw',
     'period_a_platforms',
     'period_b_platforms',
+    'period_a_modis_per_sat',
+    'period_b_modis_per_sat',
+    'modis_per_sat_delta',
+    'period_a_viirs_per_sat',
+    'period_b_viirs_per_sat',
+    'viirs_per_sat_delta',
   ];
 
   const rows = comp.aligned_series.map((r) => [
@@ -1161,6 +1304,12 @@ export function generatePeriodComparisonCsv(comp: PeriodComparisonResponse): str
     r.period_b?.viirs_frp_mean_mw ?? '',
     escapeCsvCell((r.period_a?.active_platforms ?? []).join(';')),
     escapeCsvCell((r.period_b?.active_platforms ?? []).join(';')),
+    r.period_a?.modis_per_satellite ?? '',
+    r.period_b?.modis_per_satellite ?? '',
+    r.modis_per_satellite_delta ?? '',
+    r.period_a?.viirs_per_satellite ?? '',
+    r.period_b?.viirs_per_satellite ?? '',
+    r.viirs_per_satellite_delta ?? '',
   ]);
 
   return [...headerComments, columns.join(','), ...rows.map((r) => r.join(','))].join('\n');

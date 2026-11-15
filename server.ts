@@ -688,6 +688,7 @@ async function computeServerCalendarAnalytics(params: {
   );
 
   let seededBuckets: DailyAggregateBucket[] = [];
+  let indParquetMergedInGlobal = false;
   if (isGlobalSeeded && startDate <= historicalEndDate) {
     seededBuckets = queryGlobalPresetBuckets({
       bbox: aoi.bbox,
@@ -700,6 +701,30 @@ async function computeServerCalendarAnalytics(params: {
       modisMinConfidence,
       viirsCategories,
     });
+
+    if (aoi.id === 'global-world' && manifest?.available && globalManifest) {
+      for (const win of globalManifest.coverage_windows) {
+        const winStart = startDate > win.start_date ? startDate : win.start_date;
+        const rawWinEnd = historicalEndDate < win.end_date ? historicalEndDate : win.end_date;
+        const winEnd =
+          rawWinEnd <= manifest.date_range.max_date ? rawWinEnd : manifest.date_range.max_date;
+        if (winStart <= winEnd) {
+          const indBuckets = await queryParquetDailyBuckets({
+            bbox: manifest.coverage_bbox,
+            startDate: winStart,
+            endDate: winEnd,
+            sensor,
+            platforms,
+            processingStatus,
+            dayNight,
+            modisMinConfidence,
+            viirsCategories,
+          });
+          seededBuckets.push(...indBuckets);
+          indParquetMergedInGlobal = true;
+        }
+      }
+    }
   }
 
   let areaResultObservations: CanonicalObservation[] = [];
@@ -798,6 +823,11 @@ async function computeServerCalendarAnalytics(params: {
     sources.push(
       `NASA FIRMS Seeded Global Presets Archive (${globalManifest.canonical_rows_total.toLocaleString()} MODIS C6.1 & VIIRS C2 observations; Oct-Nov 2024/2025/2026)`
     );
+    if (indParquetMergedInGlobal && manifest?.available) {
+      sources.push(
+        `NASA FIRMS Historical Parquet Archive (Indonesia extent, ${manifest.canonical_rows_total.toLocaleString()} records merged within covered Oct-Nov 2024/2025/2026 windows)`
+      );
+    }
   }
   if (hasAreaOverlap) {
     sources.push(
@@ -818,6 +848,9 @@ async function computeServerCalendarAnalytics(params: {
   const checksums = Array.from(
     new Set([
       ...(hasSeededOverlap && globalManifest ? globalManifest.checksums.slice(0, 12) : []),
+      ...(indParquetMergedInGlobal && manifest?.available
+        ? manifest.source_files.map((f) => f.sha256_checksum)
+        : []),
       ...areaFeedStats.map((f) => f.sha256),
       ...(hasLiveRows ? firmsSnap.feedStats.map((f) => f.sha256) : []),
     ])
@@ -825,7 +858,11 @@ async function computeServerCalendarAnalytics(params: {
 
   const noticeParts: string[] = [];
   if (hasSeededOverlap) {
-    noticeParts.push('NASA FIRMS Global Presets Archive (Oct–Nov 2024/2025/2026)');
+    noticeParts.push(
+      indParquetMergedInGlobal
+        ? 'NASA FIRMS Global Presets + Indonesia Parquet Archive (Oct–Nov 2024/2025/2026)'
+        : 'NASA FIRMS Global Presets Archive (Oct–Nov 2024/2025/2026)'
+    );
   }
   if (hasAreaOverlap) {
     noticeParts.push(
@@ -866,7 +903,7 @@ async function computeServerCalendarAnalytics(params: {
     demoNotice:
       noticeParts.length > 0
         ? aoi.id === 'global-world'
-          ? `REAL NASA FIRMS DATA — ${noticeParts.join(' + ')}. Global scope reflects the 4 seeded preset regions plus the live 24h FIRMS stream.`
+          ? `REAL NASA FIRMS DATA — ${noticeParts.join(' + ')}. Global scope combines the 4 seeded global preset archives + Indonesia Parquet archive (for covered Oct-Nov 2024/2025/2026 windows) plus the live 24h FIRMS stream.`
           : `REAL NASA FIRMS DATA — ${noticeParts.join(' + ')}.`
         : 'NO_SOURCE_DATA: No NASA archive or live feed covers the selected AOI and dates. Historical 2001-2026 records are archived for Indonesia; 4 global presets cover Oct-Nov 2024/2025/2026.',
     sources,
@@ -1900,7 +1937,10 @@ export function createApiApp(options?: {
         : getParquetManifest()?.date_range.max_date ?? '2026-11-12';
 
       const yoySummary: YoyYearSummary[] = [];
-      const inSeededPresets = isAoiInSeededGlobalPresets(targetAoi);
+      const globalManifestForYoy = getGlobalPresetsManifest();
+      const isGlobalWorld =
+        targetAoi.id === 'global-world' && Boolean(globalManifestForYoy?.available);
+      const inSeededPresets = isAoiInSeededGlobalPresets(targetAoi) || isGlobalWorld;
       if (!crossYearSpan && (inParquet || inSeededPresets)) {
         const eligibleYoyWindows = candidateYears
           .map((yr) => {
@@ -1911,8 +1951,15 @@ export function createApiApp(options?: {
               if (eD > maxAvailableDate) eD = maxAvailableDate;
             }
             if (sD > eD) return null;
-            if (!inParquet && inSeededPresets && !isRangeCoveredBySeededGlobalPresets(targetAoi, sD, eD)) {
-              return null;
+            if (!inParquet && inSeededPresets) {
+              const covered = isGlobalWorld
+                ? Boolean(
+                    globalManifestForYoy?.coverage_windows.some(
+                      (w) => sD >= w.start_date && eD <= w.end_date
+                    )
+                  )
+                : isRangeCoveredBySeededGlobalPresets(targetAoi, sD, eD);
+              if (!covered) return null;
             }
             return { yr, sD, eD };
           })
@@ -2228,6 +2275,7 @@ export function createApiApp(options?: {
     let usedAreaApi = false;
     const inParquet = isAoiInParquetCoverage(targetAoi);
 
+    let globalMergedIndParquet = false;
     if (inParquet && startDateStr < liveCutoff) {
       const pqMaxDate = getParquetManifest()?.date_range.max_date ?? '2026-11-12';
       const pqRawEnd = endDateStr < liveCutoff ? endDateStr : prevUtcDate(liveCutoff);
@@ -2291,8 +2339,11 @@ export function createApiApp(options?: {
     } else if (!inParquet && startDateStr < liveCutoff) {
       const pqEnd = endDateStr < liveCutoff ? endDateStr : prevUtcDate(liveCutoff);
       const globalManifest = getGlobalPresetsManifest();
+      const manifest = getParquetManifest();
       const mapKey = getMapKey();
       let realGlobalMatched: CanonicalObservation[] = [];
+      let indPqItems: CanonicalObservation[] = [];
+      let indPqTotal = 0;
 
       if (
         globalManifest?.available &&
@@ -2323,6 +2374,82 @@ export function createApiApp(options?: {
           modisMinConfidence: filterCheck.modisMinConfidence!,
           viirsCategories: filterCheck.viirsCategories!,
         });
+
+        if (targetAoi.id === 'global-world' && manifest?.available) {
+          const pqMaxDate = manifest.date_range.max_date ?? '2026-11-12';
+          for (const win of globalManifest.coverage_windows) {
+            const wStart = startDateStr > win.start_date ? startDateStr : win.start_date;
+            const rawWEnd = pqEnd < win.end_date ? pqEnd : win.end_date;
+            const wEnd = rawWEnd <= pqMaxDate ? rawWEnd : pqMaxDate;
+            if (wStart <= wEnd) {
+              const indBuckets = await queryParquetDailyBuckets({
+                bbox: manifest.coverage_bbox,
+                startDate: wStart,
+                endDate: wEnd,
+                sensor: filterCheck.sensor!,
+                platforms: filterCheck.platforms!,
+                processingStatus: filterCheck.processingStatus!,
+                dayNight: filterCheck.dayNight!,
+                modisMinConfidence: filterCheck.modisMinConfidence!,
+                viirsCategories: filterCheck.viirsCategories!,
+              });
+              presetBuckets.push(...indBuckets);
+              globalMergedIndParquet = true;
+            }
+          }
+
+          if (pqEnd >= '2026-10-01') {
+            const recWins = globalManifest.coverage_windows
+              .map((w) => {
+                const ws = [startDateStr, w.start_date, '2026-10-01'].sort().slice(-1)[0];
+                const we = [pqEnd, w.end_date, pqMaxDate].sort()[0];
+                return ws <= we ? { ws, we } : null;
+              })
+              .filter((x): x is { ws: string; we: string } => x !== null);
+            if (recWins.length > 0) {
+              const firstWin = recWins[0];
+              const lastWin = recWins[recWins.length - 1];
+              const liveSliceLen =
+                cursorOffset < liveMatching.length
+                  ? Math.min(limitRaw, liveMatching.length - cursorOffset)
+                  : 0;
+              const remAfterLive = Math.max(0, limitRaw - liveSliceLen);
+              const globalOffset = Math.max(0, cursorOffset - liveMatching.length);
+              const globalSliceLen =
+                remAfterLive > 0 && globalOffset < realGlobalMatched.length
+                  ? Math.min(remAfterLive, realGlobalMatched.length - globalOffset)
+                  : 0;
+              const remAfterGlobal = Math.max(0, remAfterLive - globalSliceLen);
+              const indPqOffset = Math.max(
+                0,
+                cursorOffset - liveMatching.length - realGlobalMatched.length
+              );
+              const pqCountRes = await queryParquetRecentObservations({
+                bbox: manifest.coverage_bbox,
+                startUtc:
+                  firstWin.ws === startDateStr ? startUtc : `${firstWin.ws}T00:00:00Z`,
+                endUtc:
+                  lastWin.we === endDateStr ? endUtc : `${lastWin.we}T23:59:59Z`,
+                sensor: filterCheck.sensor!,
+                platforms: filterCheck.platforms!,
+                processingStatus: filterCheck.processingStatus!,
+                dayNight: filterCheck.dayNight!,
+                modisMinConfidence: filterCheck.modisMinConfidence!,
+                viirsCategories: filterCheck.viirsCategories!,
+                limit: Math.max(1, remAfterGlobal),
+                offset: indPqOffset,
+              });
+              if (pqCountRes) {
+                indPqTotal = pqCountRes.totalMatching;
+                if (remAfterGlobal > 0) {
+                  indPqItems = pqCountRes.items.slice(0, remAfterGlobal);
+                }
+                globalMergedIndParquet = true;
+              }
+            }
+          }
+        }
+
         const liveBuckets = observationsToDailyBuckets(liveMatching);
         binCoLocation =
           computeBucketSpatialConcordance([...presetBuckets, ...liveBuckets], 200) ??
@@ -2360,10 +2487,11 @@ export function createApiApp(options?: {
         }
       }
 
-      historicalTotal = realGlobalMatched.length;
+      historicalTotal = realGlobalMatched.length + indPqTotal;
       const pqOffset = Math.max(0, cursorOffset - liveMatching.length);
       const remainingLimit = Math.max(1, limitRaw - Math.max(0, liveMatching.length - cursorOffset));
-      historicalItems = realGlobalMatched.slice(pqOffset, pqOffset + remainingLimit);
+      const globalSlice = realGlobalMatched.slice(pqOffset, pqOffset + remainingLimit);
+      historicalItems = [...globalSlice, ...indPqItems].slice(0, remainingLimit);
     }
 
     if (!binCoLocation && liveMatching.length > 0) {
@@ -2397,6 +2525,9 @@ export function createApiApp(options?: {
       (isAoiInSeededGlobalPresets(targetAoi) || targetAoi.id === 'global-world')
     ) {
       obsSources.push('NASA FIRMS Global Presets Archive (100% bucket concordance + representative M0_RAW points, Oct–Nov 2024/2025/2026)');
+      if (globalMergedIndParquet) {
+        obsSources.push('NASA FIRMS Historical & Recent Parquet Archive (Indonesia)');
+      }
     }
     if (usedAreaApi) {
       obsSources.push('NASA FIRMS Area REST API (Bounded AOI Query)');

@@ -9,6 +9,7 @@ import {
   Granularity,
   SensorFilter,
 } from '../types/firescope';
+import { getExpectedActivePlatforms } from '../science/harmonizationScience';
 import { InfoPopover } from './ProgressiveDisclosure';
 
 interface CalendarHeatmapProps {
@@ -45,6 +46,18 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
     series.find((b) => b.bin_key === selectedBinKey) ??
     series[series.length - 1] ??
     null;
+
+  const activeExpectedSats = activeBin
+    ? getExpectedActivePlatforms(
+        activeBin.time_bin_start_utc,
+        activeBin.time_bin_end_utc,
+        query.platforms,
+        activeBin.platform_breakdown
+      )
+    : null;
+  const activeM3Point = activeBin
+    ? analytics.harmonization?.points.find((p) => p.bin_key === activeBin.bin_key) ?? null
+    : null;
 
   const isCompactWindow = series.length > 0 && series.length <= 2;
   const isShortWindow = series.length > 2 && series.length <= 4;
@@ -581,6 +594,14 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
                   ? activeBin.values.MODIS.toLocaleString()
                   : 'No data'}
               </strong>
+              {activeBin.values.MODIS !== null &&
+                activeExpectedSats &&
+                activeExpectedSats.modis > 0 && (
+                  <span className="text-[var(--text-muted)]">
+                    {' '}
+                    ({(activeBin.values.MODIS / activeExpectedSats.modis).toFixed(1)}/sat)
+                  </span>
+                )}
             </span>
             <span className="text-[var(--text-muted)]">·</span>
             <span className="font-mono text-[var(--text-secondary)]">
@@ -590,6 +611,15 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
                   ? activeBin.values.VIIRS.toLocaleString()
                   : 'No data'}
               </strong>
+              {activeBin.values.VIIRS !== null &&
+                activeExpectedSats &&
+                activeExpectedSats.viirs > 0 && (
+                  <span className="text-[var(--text-muted)]">
+                    {' '}
+                    ({(activeBin.values.VIIRS / activeExpectedSats.viirs).toFixed(1)}/sat ·{' '}
+                    {activeExpectedSats.viirs} sat)
+                  </span>
+                )}
             </span>
             <span className="text-[var(--text-muted)]">·</span>
             <span className="font-mono text-[var(--text-secondary)]">
@@ -600,6 +630,26 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
                   : 'N/A'}
               </strong>
             </span>
+            {activeM3Point && activeM3Point.bridged_modis_equiv !== null && (
+              <>
+                <span className="text-[var(--text-muted)]">·</span>
+                <span className="font-mono text-[var(--text-secondary)]">
+                  M3 Bridge (MODIS-eq):{' '}
+                  <strong className="text-[var(--ember)]">
+                    {activeM3Point.bridged_modis_equiv.toLocaleString()}
+                    {query.metric === 'frp_mw' ? ' MW' : ''}
+                  </strong>
+                  {activeM3Point.bridged_lower_80 !== null &&
+                    activeM3Point.bridged_upper_80 !== null && (
+                      <span className="text-[var(--text-muted)]">
+                        {' '}
+                        [{activeM3Point.bridged_lower_80.toLocaleString()}–
+                        {activeM3Point.bridged_upper_80.toLocaleString()}]
+                      </span>
+                    )}
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)]">

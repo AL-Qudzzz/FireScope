@@ -402,8 +402,9 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
           <div className="flex items-center gap-2 text-[var(--text-secondary)]">
             <Info className="w-4 h-4 text-[var(--viirs)] shrink-0" />
             <span>
-              Global scope has 30-day Oct–Nov archives for 4 seeded presets (2024–2026) plus live
-              24h global streams. Switch to an Indonesia region for 2001–2026 multi-decade archives:
+              Global scope combines 30-day Oct–Nov archives (2024–2026) across the 4 seeded global
+              presets + Indonesia Parquet archive, plus live 24h global streams. Switch to an
+              Indonesia region for continuous 2001–2026 multi-decade archives:
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -696,6 +697,13 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                     <div className="text-[11px] font-mono text-[var(--text-secondary)] tabular-nums">
                       Mean FRP: {data.totals.period_a_modis_frp_mean_mw ?? '—'} MW
                     </div>
+                    {data.totals.period_a_modis_per_satellite !== null &&
+                      data.totals.period_a_modis_per_satellite !== undefined && (
+                        <div className="text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
+                          Per-sat ({data.totals.period_a_modis_satellites ?? 2} sat):{' '}
+                          {data.totals.period_a_modis_per_satellite.toLocaleString()}/sat
+                        </div>
+                      )}
                   </div>
                   <div>
                     <div className="text-[11px] text-[var(--modis)] font-medium">{data.period_b.label}</div>
@@ -705,8 +713,33 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                     <div className="text-[11px] font-mono text-[var(--text-secondary)] tabular-nums">
                       Mean FRP: {data.totals.period_b_modis_frp_mean_mw ?? '—'} MW
                     </div>
+                    {data.totals.period_b_modis_per_satellite !== null &&
+                      data.totals.period_b_modis_per_satellite !== undefined && (
+                        <div className="text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
+                          Per-sat ({data.totals.period_b_modis_satellites ?? 2} sat):{' '}
+                          {data.totals.period_b_modis_per_satellite.toLocaleString()}/sat
+                        </div>
+                      )}
                   </div>
                 </div>
+
+                {data.totals.modis_per_satellite_delta !== null &&
+                  data.totals.modis_per_satellite_delta !== undefined && (
+                    <div className="pt-2 border-t border-[var(--border-subtle)]/70 flex items-center justify-between text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
+                      <span>Per-satellite rate (M / k_MODIS) Δ</span>
+                      <span>
+                        {data.totals.modis_per_satellite_delta > 0 ? '+' : ''}
+                        {data.totals.modis_per_satellite_delta.toLocaleString()}/sat (
+                        {data.totals.modis_per_satellite_pct_change !== null &&
+                        data.totals.modis_per_satellite_pct_change !== undefined
+                          ? `${data.totals.modis_per_satellite_pct_change > 0 ? '+' : ''}${
+                              data.totals.modis_per_satellite_pct_change
+                            }%`
+                          : 'N/A'}
+                        )
+                      </span>
+                    </div>
+                  )}
               </div>
 
               {/* VIIRS C2 Column */}
@@ -733,6 +766,13 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                     <div className="text-[11px] font-mono text-[var(--text-secondary)] tabular-nums">
                       Mean FRP: {data.totals.period_a_viirs_frp_mean_mw ?? '—'} MW
                     </div>
+                    {data.totals.period_a_viirs_per_satellite !== null &&
+                      data.totals.period_a_viirs_per_satellite !== undefined && (
+                        <div className="text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
+                          Per-sat ({data.totals.period_a_viirs_satellites ?? 1} sat):{' '}
+                          {data.totals.period_a_viirs_per_satellite.toLocaleString()}/sat
+                        </div>
+                      )}
                   </div>
                   <div>
                     <div className="text-[11px] text-[var(--viirs)] font-medium">{data.period_b.label}</div>
@@ -742,8 +782,33 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                     <div className="text-[11px] font-mono text-[var(--text-secondary)] tabular-nums">
                       Mean FRP: {data.totals.period_b_viirs_frp_mean_mw ?? '—'} MW
                     </div>
+                    {data.totals.period_b_viirs_per_satellite !== null &&
+                      data.totals.period_b_viirs_per_satellite !== undefined && (
+                        <div className="text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
+                          Per-sat ({data.totals.period_b_viirs_satellites ?? 1} sat):{' '}
+                          {data.totals.period_b_viirs_per_satellite.toLocaleString()}/sat
+                        </div>
+                      )}
                   </div>
                 </div>
+
+                {data.totals.viirs_per_satellite_delta !== null &&
+                  data.totals.viirs_per_satellite_delta !== undefined && (
+                    <div className="pt-2 border-t border-[var(--border-subtle)]/70 flex items-center justify-between text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
+                      <span>Per-satellite rate (V / k_VIIRS) Δ</span>
+                      <span>
+                        {data.totals.viirs_per_satellite_delta > 0 ? '+' : ''}
+                        {data.totals.viirs_per_satellite_delta.toLocaleString()}/sat (
+                        {data.totals.viirs_per_satellite_pct_change !== null &&
+                        data.totals.viirs_per_satellite_pct_change !== undefined
+                          ? `${data.totals.viirs_per_satellite_pct_change > 0 ? '+' : ''}${
+                              data.totals.viirs_per_satellite_pct_change
+                            }%`
+                          : 'N/A'}
+                        )
+                      </span>
+                    </div>
+                  )}
               </div>
             </div>
 
@@ -941,6 +1006,12 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                                   />
                                 </div>
                               </div>
+                              {yr.modis_per_satellite !== undefined && (
+                                <div className="text-[10px] text-[var(--text-muted)] pl-18">
+                                  {yr.modis_per_satellite.toLocaleString()}/sat (
+                                  {yr.modis_expected_satellites ?? 2}M)
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 px-3 text-right text-[var(--text-secondary)]">
                               {yr.modis_frp_mean_mw !== null ? `${yr.modis_frp_mean_mw} MW` : '—'}
@@ -959,6 +1030,12 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                                   />
                                 </div>
                               </div>
+                              {yr.viirs_per_satellite !== undefined && (
+                                <div className="text-[10px] text-[var(--text-muted)] pl-18">
+                                  {yr.viirs_per_satellite.toLocaleString()}/sat (
+                                  {yr.viirs_expected_satellites ?? 1}V)
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 px-3 text-right text-[var(--text-secondary)]">
                               {yr.viirs_frp_mean_mw !== null ? `${yr.viirs_frp_mean_mw} MW` : '—'}

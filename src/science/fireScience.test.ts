@@ -22,6 +22,7 @@ import {
   clusterCrossSensorObservations,
   computeBucketSpatialConcordance,
   computeHarmonizedSeries,
+  getExpectedActivePlatforms,
 } from './harmonizationScience';
 import {
   canonicalizeEonetEvents,
@@ -2070,4 +2071,446 @@ test('Regression #36 (Step 4 & Step 5): Express API emits NO_SOURCE_DATA for unc
       srv.close((err) => (err ? reject(err) : resolve()))
     );
   }
+});
+
+test('Regression #37 (Gap #3): FR-08 exposes constellation-normalized per-satellite rates across totals, YoY summary, and CSV export', () => {
+  const buildEraCal = (
+    startDate: string,
+    endDate: string,
+    viirsPlatforms: ('SNPP' | 'NOAA20' | 'NOAA21')[],
+    modisCount: number,
+    viirsPerSatCount: number
+  ) => {
+    const recs = [];
+    for (let i = 0; i < modisCount; i++) {
+      recs.push(
+        parseModisRecord(
+          {
+            latitude: -2.4,
+            longitude: 114.1,
+            brightness: 328,
+            scan: 1.0,
+            track: 1.0,
+            acq_date: startDate,
+            acq_time: '0300',
+            satellite: i % 2 === 0 ? 'Terra' : 'Aqua',
+            confidence: 80,
+            version: '6.1',
+            bright_t31: 294,
+            frp: 20,
+            daynight: 'D',
+          },
+          { retrievedAtUtc: '2026-11-13T00:00:00Z', checksum: 'm-era', rowNumber: i + 1 }
+        )
+      );
+    }
+    let rowIdx = 1;
+    for (const vPlat of viirsPlatforms) {
+      const satCode = vPlat === 'SNPP' ? 'N' : vPlat === 'NOAA20' ? 'J1' : 'J2';
+      for (let i = 0; i < viirsPerSatCount; i++) {
+        recs.push(
+          parseViirsRecord(
+            {
+              latitude: -2.45,
+              longitude: 114.15,
+              bright_ti4: 345,
+              scan: 0.4,
+              track: 0.4,
+              acq_date: endDate,
+              acq_time: '0600',
+              satellite: satCode,
+              confidence: 'h',
+              version: '2.0',
+              bright_ti5: 295,
+              frp: 10,
+              daynight: 'D',
+            },
+            { retrievedAtUtc: '2026-11-13T00:00:00Z', checksum: 'v-era', rowNumber: rowIdx++ }
+          )
+        );
+      }
+    }
+
+    return aggregateCalendarFromBuckets({
+      buckets: observationsToDailyBuckets(recs),
+      aoi: SAMPLE_AOI,
+      startDate,
+      endDate,
+      granularity: 'month',
+      sensor: 'ALL',
+      platforms: ['TERRA', 'AQUA', ...viirsPlatforms],
+      processingStatus: 'ALL',
+      dayNight: 'ALL',
+      metric: 'detection_count',
+      platformRegistry: TEST_PLATFORM_REGISTRY,
+      archiveCoverageStart: '2012-01-01',
+      archiveCoverageEnd: '2026-11-13',
+      dataMode: 'LIVE_NASA_FIRMS',
+      demoNotice: 'Era rate test',
+      sources: ['NASA FIRMS Parquet'],
+      retrievedAtUtc: '2026-11-13T10:00:00Z',
+      latestAcquisitionUtc: `${endDate}T06:00:00Z`,
+      archiveChecksums: ['sha-era'],
+    });
+  };
+
+  // 2015: 1 VIIRS satellite (SNPP), 10 detections -> 10.0/sat
+  // 2024: 3 VIIRS satellites (SNPP + NOAA20 + NOAA21), 30 detections -> 10.0/sat
+  const cal2015 = buildEraCal('2015-09-01', '2015-09-10', ['SNPP'], 20, 10);
+  const cal2024 = buildEraCal('2024-09-01', '2024-09-10', ['SNPP', 'NOAA20', 'NOAA21'], 20, 10);
+
+  const comp = buildPeriodComparisonResponse({
+    aoi: SAMPLE_AOI,
+    periodA: cal2015,
+    periodB: cal2024,
+    periodALabel: '2015 Sep (1 VIIRS sat)',
+    periodBLabel: '2024 Sep (3 VIIRS sats)',
+    yoySummary: [
+      {
+        year: 2015,
+        start_date: '2015-09-01',
+        end_date: '2015-09-10',
+        modis_detections: 20,
+        viirs_detections: 10,
+        modis_frp_sum_mw: 400,
+        modis_frp_mean_mw: 20,
+        viirs_frp_sum_mw: 100,
+        viirs_frp_mean_mw: 10,
+        active_platforms: ['TERRA', 'AQUA', 'SNPP'],
+        processing_statuses: ['STANDARD'],
+        data_backing: 'REAL_NASA_ARCHIVE_PARQUET',
+      },
+      {
+        year: 2024,
+        start_date: '2024-09-01',
+        end_date: '2024-09-10',
+        modis_detections: 20,
+        viirs_detections: 30,
+        modis_frp_sum_mw: 400,
+        modis_frp_mean_mw: 20,
+        viirs_frp_sum_mw: 300,
+        viirs_frp_mean_mw: 10,
+        active_platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+        processing_statuses: ['STANDARD'],
+        data_backing: 'REAL_NASA_ARCHIVE_PARQUET',
+      },
+    ],
+    dataBacking: 'REAL_NASA_ARCHIVE_PARQUET',
+    sources: ['NASA FIRMS Parquet'],
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+    archiveChecksums: ['sha-era'],
+  });
+
+  assert.equal(comp.totals.period_a_viirs, 10);
+  assert.equal(comp.totals.period_b_viirs, 30);
+  assert.equal(comp.totals.viirs_delta, 20);
+  assert.equal(comp.totals.period_a_viirs_satellites, 1);
+  assert.equal(comp.totals.period_b_viirs_satellites, 3);
+  assert.equal(comp.totals.period_a_viirs_per_satellite, 10);
+  assert.equal(comp.totals.period_b_viirs_per_satellite, 10);
+  assert.equal(comp.totals.viirs_per_satellite_delta, 0);
+  assert.equal(comp.totals.viirs_per_satellite_pct_change, 0);
+  assert.equal(comp.totals.period_a_modis_satellites, 2);
+  assert.equal(comp.totals.period_a_modis_per_satellite, 10);
+
+  assert.equal(comp.yoy_summary[0]?.viirs_expected_satellites, 1);
+  assert.equal(comp.yoy_summary[0]?.viirs_per_satellite, 10);
+  assert.equal(comp.yoy_summary[1]?.viirs_expected_satellites, 3);
+  assert.equal(comp.yoy_summary[1]?.viirs_per_satellite, 10);
+
+  const csv = generatePeriodComparisonCsv(comp);
+  assert.ok(
+    csv.includes(
+      'period_a_modis_per_sat,period_b_modis_per_sat,modis_per_sat_delta,period_a_viirs_per_sat,period_b_viirs_per_sat,viirs_per_sat_delta'
+    )
+  );
+  assert.ok(csv.includes(',10,10,0,10,10,0'));
+});
+
+test('Regression #38 (Gap #1): Global World View merges Indonesia Parquet in covered windows and preserves NO_SOURCE_DATA outside them', async () => {
+  const { queryGlobalPresetBuckets } = await import('../services/globalPresetsService');
+  const { createApiApp } = await import('../../server');
+
+  const presetOnlyBuckets = queryGlobalPresetBuckets({
+    bbox: { west: -180, south: -90, east: 180, north: 90 },
+    startDate: '2026-10-15',
+    endDate: '2026-10-20',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    modisMinConfidence: 0,
+    viirsCategories: ['low', 'nominal', 'high'],
+  });
+  const presetOnlyTotal = presetOnlyBuckets.reduce((acc, b) => acc + b.detection_count, 0);
+
+  const app = createApiApp({ preloadLiveFeeds: false, offlineMode: true });
+  const srv = http.createServer(app);
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+  const { port } = srv.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Covered window merges 4 global presets + Indonesia Parquet archive
+    const calRes = await fetch(
+      `${baseUrl}/api/v1/analytics/calendar?aoi_id=global-world&start_date=2026-10-15&end_date=2026-10-20&granularity=day`
+    );
+    assert.equal(calRes.status, 200);
+    const calJson = await calRes.json();
+    const combinedTotal =
+      (calJson.totals?.MODIS_detections ?? 0) + (calJson.totals?.VIIRS_detections ?? 0);
+    assert.ok(
+      combinedTotal > presetOnlyTotal,
+      `Expected global-world combined total (${combinedTotal}) > preset-only total (${presetOnlyTotal})`
+    );
+    assert.ok(
+      Array.isArray(calJson.provenance?.sources) &&
+        calJson.provenance.sources.some((s: string) => /Parquet|Indonesia/i.test(s)),
+      'Expected global-world sources to include Indonesia Parquet archive'
+    );
+
+    // 2. Uncovered historical gap remains NO_SOURCE_DATA with null counts
+    const gapRes = await fetch(
+      `${baseUrl}/api/v1/analytics/calendar?aoi_id=global-world&start_date=2024-05-01&end_date=2024-05-03&granularity=day`
+    );
+    assert.equal(gapRes.status, 200);
+    const gapJson = await gapRes.json();
+    assert.ok(gapJson.series.length === 3);
+    assert.ok(
+      gapJson.series.every(
+        (b: CalendarBinRecord) =>
+          b.coverage_state === 'NO_SOURCE_DATA' &&
+          b.values.MODIS === null &&
+          b.values.VIIRS === null
+      )
+    );
+
+    // 3. /api/v1/analytics/compare for global-world returns multi-year YoY summary with per-sat rates
+    const cmpRes = await fetch(
+      `${baseUrl}/api/v1/analytics/compare?aoi_id=global-world&period_a_start=2024-10-15&period_a_end=2024-10-20&period_b_start=2025-10-15&period_b_end=2025-10-20`
+    );
+    assert.equal(cmpRes.status, 200);
+    const cmpJson = await cmpRes.json();
+    assert.ok(Array.isArray(cmpJson.yoy_summary) && cmpJson.yoy_summary.length >= 2);
+    assert.ok(
+      cmpJson.yoy_summary.every(
+        (yr: { viirs_per_satellite?: number; viirs_expected_satellites?: number }) =>
+          typeof yr.viirs_per_satellite === 'number' &&
+          typeof yr.viirs_expected_satellites === 'number'
+      )
+    );
+
+    // 4. /api/v1/observations returns merged total_matching and real observations for global-world
+    const obsRes = await fetch(
+      `${baseUrl}/api/v1/observations?aoi_id=global-world&start_date=2026-10-15&end_date=2026-10-15&limit=10`
+    );
+    assert.equal(obsRes.status, 200);
+    const obsJson = await obsRes.json();
+    assert.ok(obsJson.total_matching > 0);
+    assert.ok(Array.isArray(obsJson.items) && obsJson.items.length > 0);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      srv.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+test('Regression #39 (Gap #2): generateProvenanceCsv exports per-satellite columns always and gates M3 columns behind analytics.harmonization', async () => {
+  const { generateProvenanceCsv } = await import('../services/firescopeApi');
+
+  const sampleRecs = [];
+  for (let d = 15; d <= 17; d++) {
+    const dayStr = `2024-10-${d}`;
+    sampleRecs.push(
+      parseModisRecord(
+        {
+          latitude: -2.2,
+          longitude: 114.0,
+          brightness: 325,
+          scan: 1.0,
+          track: 1.0,
+          acq_date: dayStr,
+          acq_time: '0300',
+          satellite: 'Terra',
+          confidence: 80,
+          version: '6.1',
+          bright_t31: 294,
+          frp: 30,
+          daynight: 'D',
+        },
+        { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'csv-m', rowNumber: d }
+      ),
+      parseViirsRecord(
+        {
+          latitude: -2.2,
+          longitude: 114.0,
+          bright_ti4: 342,
+          scan: 0.4,
+          track: 0.4,
+          acq_date: dayStr,
+          acq_time: '0600',
+          satellite: 'N20',
+          confidence: 'h',
+          version: '2.0',
+          bright_ti5: 292,
+          frp: 15,
+          daynight: 'D',
+        },
+        { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'csv-v', rowNumber: d }
+      )
+    );
+  }
+
+  const cal = aggregateCalendarFromBuckets({
+    buckets: observationsToDailyBuckets(sampleRecs),
+    aoi: SAMPLE_AOI,
+    startDate: '2024-10-15',
+    endDate: '2024-10-17',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: TEST_PLATFORM_REGISTRY,
+    archiveCoverageStart: '2024-10-01',
+    archiveCoverageEnd: '2024-10-31',
+    dataMode: 'LIVE_NASA_FIRMS',
+    demoNotice: 'CSV provenance test',
+    sources: ['NASA FIRMS Parquet'],
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+    latestAcquisitionUtc: '2024-10-17T06:00:00Z',
+    archiveChecksums: ['sha-csv'],
+  });
+
+  // Default (M3 disabled): includes per-sat columns, omits M3 columns & header
+  const csvDefault = generateProvenanceCsv(cal);
+  assert.ok(
+    csvDefault.includes(
+      'modis_active_satellites,viirs_active_satellites,modis_per_satellite,viirs_per_satellite'
+    )
+  );
+  assert.equal(csvDefault.includes('m3_bridged_modis_equiv'), false);
+  assert.equal(csvDefault.includes('# M3 Harmonization Method:'), false);
+
+  // Experimental M3 enabled: appends M3 diagnostic header comments and 5 M3 columns
+  const calWithM3 = {
+    ...cal,
+    harmonization: computeHarmonizedSeries(cal.series, 'detection_count'),
+  };
+  const csvWithM3 = generateProvenanceCsv(calWithM3);
+  assert.ok(csvWithM3.includes('# M3 Harmonization Method: M3_EMPIRICAL_PLATFORM_BRIDGE'));
+  assert.ok(
+    csvWithM3.includes(
+      'm3_bridged_modis_equiv,m3_bridged_lower_80,m3_bridged_upper_80,m3_bridged_source,m3_viirs_calibrated_modis_equiv'
+    )
+  );
+});
+
+test('Regression #40 (Gap #4): CalendarHeatmap inspector per-satellite rates and M3 bin lookup align across 1-sat and 3-sat VIIRS eras', () => {
+  const mkOverlapBin = (
+    binKey: string,
+    startDate: string,
+    endDate: string,
+    viirsPlats: ('SNPP' | 'NOAA20' | 'NOAA21')[],
+    modisTotal: number,
+    viirsPerSat: number
+  ): CalendarBinRecord => {
+    const pBreakdown: CalendarBinRecord['platform_breakdown'] = {
+      TERRA: Math.floor(modisTotal / 2),
+      AQUA: Math.ceil(modisTotal / 2),
+      SNPP: viirsPlats.includes('SNPP') ? viirsPerSat : 0,
+      NOAA20: viirsPlats.includes('NOAA20') ? viirsPerSat : 0,
+      NOAA21: viirsPlats.includes('NOAA21') ? viirsPerSat : 0,
+    };
+    const viirsTotal = viirsPlats.length * viirsPerSat;
+    return {
+      bin_key: binKey,
+      label: binKey,
+      time_bin_start_utc: `${startDate}T00:00:00Z`,
+      time_bin_end_utc: `${endDate}T23:59:59Z`,
+      granularity: 'month',
+      coverage_state: 'OBSERVED_ACTIVE',
+      values: { MODIS: modisTotal, VIIRS: viirsTotal },
+      platform_breakdown: pBreakdown,
+      processing_breakdown: { STANDARD: modisTotal + viirsTotal, NRT: 0, RT: 0, URT: 0, UNKNOWN: 0 },
+      frp_summary: {
+        MODIS: {
+          sensor: 'MODIS',
+          unit: 'MW',
+          sum_mw: modisTotal * 20,
+          mean_mw: 20,
+          median_mw: 18,
+          p90_mw: 35,
+          valid_count: modisTotal,
+          null_count: 0,
+          processing_status_note: 'test',
+        },
+        VIIRS: {
+          sensor: 'VIIRS',
+          unit: 'MW',
+          sum_mw: viirsTotal * 10,
+          mean_mw: 10,
+          median_mw: 8,
+          p90_mw: 18,
+          valid_count: viirsTotal,
+          null_count: 0,
+          processing_status_note: 'test',
+        },
+      },
+      confidence_breakdown: {
+        MODIS_numeric_bins: { low_0_29: 0, nominal_30_79: modisTotal, high_80_100: 0 },
+        VIIRS_categorical: { low: 0, nominal: viirsTotal, high: 0 },
+      },
+      pooled_observation_count: modisTotal + viirsTotal,
+      pooled_caveat: 'test',
+      quality: {
+        coverage_note: 'test',
+        active_platforms: ['TERRA', 'AQUA', ...viirsPlats],
+        unavailable_platforms: [],
+        superseded_nrt_count: 0,
+        exact_duplicates_removed: 0,
+      },
+    };
+  };
+
+  const bins: CalendarBinRecord[] = [
+    mkOverlapBin('2015-08', '2015-08-01', '2015-08-31', ['SNPP'], 20, 25),
+    mkOverlapBin('2015-09', '2015-09-01', '2015-09-30', ['SNPP'], 40, 50),
+    mkOverlapBin('2016-09', '2016-09-01', '2016-09-30', ['SNPP'], 60, 75),
+    mkOverlapBin('2024-08', '2024-08-01', '2024-08-31', ['SNPP', 'NOAA20', 'NOAA21'], 20, 25),
+    mkOverlapBin('2024-09', '2024-09-01', '2024-09-30', ['SNPP', 'NOAA20', 'NOAA21'], 40, 50),
+    mkOverlapBin('2024-10', '2024-10-01', '2024-10-31', ['SNPP', 'NOAA20', 'NOAA21'], 60, 75),
+  ];
+
+  const sats2015 = getExpectedActivePlatforms(
+    bins[1].time_bin_start_utc,
+    bins[1].time_bin_end_utc,
+    bins[1].quality.active_platforms,
+    bins[1].platform_breakdown
+  );
+  const sats2024 = getExpectedActivePlatforms(
+    bins[4].time_bin_start_utc,
+    bins[4].time_bin_end_utc,
+    bins[4].quality.active_platforms,
+    bins[4].platform_breakdown
+  );
+  assert.deepEqual(sats2015, { modis: 2, viirs: 1 });
+  assert.deepEqual(sats2024, { modis: 2, viirs: 3 });
+
+  // Both 2015-09 and 2024-09 produce 50.0 VIIRS detections/sat despite 3x raw VIIRS total in 2024
+  assert.equal((bins[1].values.VIIRS ?? 0) / sats2015.viirs, 50);
+  assert.equal((bins[4].values.VIIRS ?? 0) / sats2024.viirs, 50);
+
+  const harmonization = computeHarmonizedSeries(bins, 'detection_count');
+  const m3Point2015 = harmonization.points.find((p) => p.bin_key === bins[1].bin_key);
+  const m3Point2024 = harmonization.points.find((p) => p.bin_key === bins[4].bin_key);
+  assert.ok(m3Point2015 && m3Point2015.bridged_modis_equiv !== null);
+  assert.ok(m3Point2024 && m3Point2024.bridged_modis_equiv !== null);
+  assert.equal(m3Point2015.viirs_active_platforms, 1);
+  assert.equal(m3Point2024.viirs_active_platforms, 3);
+  assert.ok(
+    Math.abs(m3Point2015.bridged_modis_equiv - m3Point2024.bridged_modis_equiv) < 0.1,
+    'Equal per-satellite rates should yield aligned M3 MODIS-eq estimates across 1-sat vs 3-sat eras'
+  );
 });
