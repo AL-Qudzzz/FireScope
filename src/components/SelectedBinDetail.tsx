@@ -12,6 +12,7 @@ import {
   CalendarAnalyticsResponse,
   CalendarBinRecord,
   CanonicalObservation,
+  CoLocationSummary,
 } from '../types/firescope';
 import { clusterCrossSensorObservations } from '../science/harmonizationScience';
 import { InfoPopover } from './ProgressiveDisclosure';
@@ -21,6 +22,7 @@ interface SelectedBinDetailProps {
   selectedBin: CalendarBinRecord;
   binObservations: CanonicalObservation[];
   totalMatchingObservations?: number;
+  binCoLocation?: CoLocationSummary | null;
   isLoadingObservations?: boolean;
   selectedObservationId: string | null;
   onSelectObservation: (obs: CanonicalObservation) => void;
@@ -33,6 +35,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
   selectedBin,
   binObservations,
   totalMatchingObservations,
+  binCoLocation,
   isLoadingObservations = false,
   selectedObservationId,
   onSelectObservation,
@@ -57,8 +60,8 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
   const viirsFrp = selectedBin.frp_summary.VIIRS;
 
   const coLocation = useMemo(
-    () => clusterCrossSensorObservations(binObservations, 6),
-    [binObservations]
+    () => binCoLocation ?? clusterCrossSensorObservations(binObservations, 6),
+    [binCoLocation, binObservations]
   );
 
   return (
@@ -320,9 +323,17 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                 const modisYears = selectedBin.seasonal_baseline.MODIS.baseline_years;
                 const viirsYears = selectedBin.seasonal_baseline.VIIRS.baseline_years;
                 const allYears = Array.from(new Set([...modisYears, ...viirsYears]));
+                const sortedYears = [...allYears].sort((a, b) => a - b);
+                const minYr = sortedYears[0];
+                const maxYr = sortedYears[sortedYears.length - 1];
+                const isContiguous =
+                  sortedYears.length > 0 && maxYr - minYr + 1 === sortedYears.length;
+                const yearsLabel = isContiguous
+                  ? `${minYr}–${maxYr}`
+                  : sortedYears.join(', ');
                 const heading =
-                  allYears.length > 0
-                    ? `Seasonal Baseline (${Math.min(...allYears)}–${Math.max(...allYears)}, ${allYears.length} yr)`
+                  sortedYears.length > 0
+                    ? `Seasonal Baseline (${yearsLabel}, ${sortedYears.length} yr)`
                     : 'Seasonal Baseline';
                 return (
                   <div className="space-y-1.5 text-[11px]">
@@ -443,26 +454,34 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
           )}
         </div>
 
-        {!isLoadingObservations && binObservations.length > 0 && (
+        {!isLoadingObservations && (binObservations.length > 0 || coLocation.total_observations > 0) && (
           <div className="rounded border border-[var(--border-subtle)] bg-[var(--surface-2)]/40 px-3 py-2 flex flex-wrap items-center justify-between gap-3 text-[11px]">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
               <span className="font-medium text-[var(--text-secondary)]">
                 Cross-Sensor Co-Location:
               </span>
+              <span className="px-1.5 py-0.5 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-secondary)]">
+                {coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS'
+                  ? `100% of ${coLocation.total_observations.toLocaleString()} bin detections (0.25° cells)`
+                  : `100% of ${coLocation.total_observations.toLocaleString()} bin point detections`}
+              </span>
               <span className="font-mono text-[var(--text-primary)] tabular-nums">
-                <strong>{coLocation.total_clusters}</strong> clusters
+                <strong>{coLocation.total_clusters.toLocaleString()}</strong>{' '}
+                {coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS' ? 'cell-days' : 'clusters'}
               </span>
               <span className="px-1.5 py-0.5 rounded bg-[var(--success)]/12 border border-[var(--success)]/30 text-[var(--success)] font-mono tabular-nums">
-                Co-Detected (M+V): {coLocation.co_detected_clusters}
+                Co-Detected (M+V): {coLocation.co_detected_clusters.toLocaleString()}
                 {coLocation.empirical_co_detected_viirs_per_modis !== null
                   ? ` · ${coLocation.empirical_co_detected_viirs_per_modis}× V:M`
                   : ''}
               </span>
               <span className="font-mono text-[var(--viirs)] tabular-nums">
-                VIIRS-Only (375m): {coLocation.viirs_only_clusters}
+                VIIRS-Only ({coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS' ? 'cells' : '375m'}):{' '}
+                {coLocation.viirs_only_clusters.toLocaleString()}
               </span>
               <span className="font-mono text-[var(--modis)] tabular-nums">
-                MODIS-Only (1km): {coLocation.modis_only_clusters}
+                MODIS-Only ({coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS' ? 'cells' : '1km'}):{' '}
+                {coLocation.modis_only_clusters.toLocaleString()}
               </span>
             </div>
 
@@ -473,15 +492,15 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
             >
               <div className="space-y-1.5">
                 <p className="text-[10px] text-[var(--text-secondary)] leading-snug">
-                  Groups MODIS (~1 km) and VIIRS (~375 m) pixel detections into physical thermal
-                  clusters within {coLocation.spatial_radius_km_rule} Haversine distance and ±
-                  {coLocation.temporal_window_hours}h overpass separation.
+                  {coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS'
+                    ? `Evaluates all ${coLocation.total_observations.toLocaleString()} matching detections across daily ${coLocation.spatial_radius_km_rule}.`
+                    : `Groups all ${coLocation.total_observations.toLocaleString()} MODIS (~1 km) and VIIRS (~375 m) pixel detections in this bin into physical thermal clusters within ${coLocation.spatial_radius_km_rule} Haversine distance and ±${coLocation.temporal_window_hours}h overpass separation (independent of table pagination).`}
                 </p>
                 {coLocation.co_detected_clusters > 0 && (
                   <p className="font-mono text-[10px] text-[var(--text-primary)]">
-                    Co-detected totals: MODIS {coLocation.co_detected_modis_obs} obs (
+                    Co-detected totals: MODIS {coLocation.co_detected_modis_obs.toLocaleString()} obs (
                     {coLocation.co_detected_modis_frp_mw} MW) · VIIRS{' '}
-                    {coLocation.co_detected_viirs_obs} obs ({coLocation.co_detected_viirs_frp_mw} MW).
+                    {coLocation.co_detected_viirs_obs.toLocaleString()} obs ({coLocation.co_detected_viirs_frp_mw} MW).
                   </p>
                 )}
               </div>

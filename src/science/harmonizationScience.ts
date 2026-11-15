@@ -9,6 +9,7 @@ import {
   HarmonizationSummary,
   HarmonizedBinPoint,
   PlatformId,
+  SensorId,
 } from '../types/firescope';
 
 const MODIS_PLATFORMS: PlatformId[] = ['TERRA', 'AQUA'];
@@ -534,13 +535,17 @@ function getCoLocationRadiusKm(obs: CanonicalObservation): number {
  */
 export function clusterCrossSensorObservations(
   observations: CanonicalObservation[],
-  temporalWindowHours = 6
+  temporalWindowHours = 6,
+  maxReturnedClusters = 200
 ): CoLocationSummary {
   if (observations.length === 0) {
     return {
+      evaluation_scope: 'FULL_BIN_POINTS',
       spatial_radius_km_rule: 'max(1.5 km, min(2.5 km, 0.75 * max(scan, track, 1.0)))',
       temporal_window_hours: temporalWindowHours,
       total_observations: 0,
+      modis_total_detections: 0,
+      viirs_total_detections: 0,
       total_clusters: 0,
       co_detected_clusters: 0,
       viirs_only_clusters: 0,
@@ -552,6 +557,12 @@ export function clusterCrossSensorObservations(
       co_detected_viirs_frp_mw: 0,
       clusters: [],
     };
+  }
+  let modisTotalDetections = 0;
+  let viirsTotalDetections = 0;
+  for (const obs of observations) {
+    if (obs.sensor === 'MODIS') modisTotalDetections += 1;
+    else viirsTotalDetections += 1;
   }
 
   const n = observations.length;
@@ -739,9 +750,12 @@ export function clusterCrossSensorObservations(
   );
 
   return {
+    evaluation_scope: 'FULL_BIN_POINTS',
     spatial_radius_km_rule: 'max(1.5 km, min(2.5 km, 0.75 * max(scan, track, 1.0)))',
     temporal_window_hours: temporalWindowHours,
     total_observations: observations.length,
+    modis_total_detections: modisTotalDetections,
+    viirs_total_detections: viirsTotalDetections,
     total_clusters: clusters.length,
     co_detected_clusters: coDetectedClusters,
     viirs_only_clusters: viirsOnlyClusters,
@@ -752,6 +766,161 @@ export function clusterCrossSensorObservations(
       coDetectedModisObs > 0 ? roundTo(coDetectedViirsObs / coDetectedModisObs, 2) : null,
     co_detected_modis_frp_mw: roundTo(coDetectedModisFrp, 2),
     co_detected_viirs_frp_mw: roundTo(coDetectedViirsFrp, 2),
-    clusters,
+    clusters: clusters.slice(0, maxReturnedClusters),
+  };
+}
+
+export interface SpatialBucketInput {
+  acq_date: string;
+  lat_bin?: number;
+  lng_bin?: number;
+  sensor: SensorId;
+  platform: PlatformId;
+  detection_count: number;
+  frp_sum_mw: number;
+}
+
+/**
+ * Evaluates full-bin MODIS/VIIRS spatial concordance across 100% of 0.25-deg daily grid buckets
+ * (used for pre-Oct-2026 Parquet daily aggregates and Seeded Global Presets without row sampling bias).
+ */
+export function computeBucketSpatialConcordance(
+  buckets: SpatialBucketInput[],
+  maxReturnedClusters = 200
+): CoLocationSummary | null {
+  const cellGroups = new Map<
+    string,
+    {
+      acqDate: string;
+      latBin: number;
+      lngBin: number;
+      modisCount: number;
+      viirsCount: number;
+      modisFrpSum: number;
+      viirsFrpSum: number;
+      platforms: Set<PlatformId>;
+    }
+  >();
+
+  let totalObs = 0;
+  let modisTotal = 0;
+  let viirsTotal = 0;
+
+  for (const b of buckets) {
+    if (
+      typeof b.lat_bin !== 'number' ||
+      !Number.isFinite(b.lat_bin) ||
+      typeof b.lng_bin !== 'number' ||
+      !Number.isFinite(b.lng_bin) ||
+      b.detection_count <= 0
+    ) {
+      continue;
+    }
+
+    totalObs += b.detection_count;
+    const key = `${b.acq_date}|${b.lat_bin}|${b.lng_bin}`;
+    let group = cellGroups.get(key);
+    if (!group) {
+      group = {
+        acqDate: b.acq_date,
+        latBin: b.lat_bin,
+        lngBin: b.lng_bin,
+        modisCount: 0,
+        viirsCount: 0,
+        modisFrpSum: 0,
+        viirsFrpSum: 0,
+        platforms: new Set<PlatformId>(),
+      };
+      cellGroups.set(key, group);
+    }
+
+    group.platforms.add(b.platform);
+    if (b.sensor === 'MODIS') {
+      modisTotal += b.detection_count;
+      group.modisCount += b.detection_count;
+      group.modisFrpSum += b.frp_sum_mw;
+    } else {
+      viirsTotal += b.detection_count;
+      group.viirsCount += b.detection_count;
+      group.viirsFrpSum += b.frp_sum_mw;
+    }
+  }
+
+  if (cellGroups.size === 0 || totalObs === 0) {
+    return null;
+  }
+
+  const clusters: CoLocationCluster[] = [];
+  let coDetectedClusters = 0;
+  let viirsOnlyClusters = 0;
+  let modisOnlyClusters = 0;
+  let coDetectedModisObs = 0;
+  let coDetectedViirsObs = 0;
+  let coDetectedModisFrp = 0;
+  let coDetectedViirsFrp = 0;
+  let seq = 1;
+
+  for (const cell of cellGroups.values()) {
+    let classification: CoLocationClassification;
+    if (cell.modisCount > 0 && cell.viirsCount > 0) {
+      classification = 'CO_DETECTED_BOTH';
+      coDetectedClusters += 1;
+      coDetectedModisObs += cell.modisCount;
+      coDetectedViirsObs += cell.viirsCount;
+      coDetectedModisFrp += cell.modisFrpSum;
+      coDetectedViirsFrp += cell.viirsFrpSum;
+    } else if (cell.viirsCount > 0) {
+      classification = 'VIIRS_ONLY_SMALL_OR_GAP';
+      viirsOnlyClusters += 1;
+    } else {
+      classification = 'MODIS_ONLY_OVERPASS';
+      modisOnlyClusters += 1;
+    }
+
+    clusters.push({
+      cluster_id: `GRID-${seq++}`,
+      classification,
+      centroid_lat: roundTo(cell.latBin + 0.125, 4),
+      centroid_lon: roundTo(cell.lngBin + 0.125, 4),
+      earliest_utc: `${cell.acqDate}T00:00:00Z`,
+      latest_utc: `${cell.acqDate}T23:59:59Z`,
+      time_span_minutes: 1440,
+      modis_count: cell.modisCount,
+      viirs_count: cell.viirsCount,
+      viirs_to_modis_ratio:
+        cell.modisCount > 0 && cell.viirsCount > 0
+          ? roundTo(cell.viirsCount / cell.modisCount, 2)
+          : null,
+      modis_frp_sum_mw: roundTo(cell.modisFrpSum, 2),
+      viirs_frp_sum_mw: roundTo(cell.viirsFrpSum, 2),
+      platforms: Array.from(cell.platforms).sort(),
+      observation_ids: [],
+    });
+  }
+
+  clusters.sort(
+    (a, b) =>
+      b.modis_count + b.viirs_count - (a.modis_count + a.viirs_count) ||
+      a.earliest_utc.localeCompare(b.earliest_utc)
+  );
+
+  return {
+    evaluation_scope: 'FULL_BIN_GRID_BUCKETS',
+    spatial_radius_km_rule: '0.25° × 0.25° grid cell same-UTC-day concordance',
+    temporal_window_hours: 24,
+    total_observations: totalObs,
+    modis_total_detections: modisTotal,
+    viirs_total_detections: viirsTotal,
+    total_clusters: clusters.length,
+    co_detected_clusters: coDetectedClusters,
+    viirs_only_clusters: viirsOnlyClusters,
+    modis_only_clusters: modisOnlyClusters,
+    co_detected_modis_obs: coDetectedModisObs,
+    co_detected_viirs_obs: coDetectedViirsObs,
+    empirical_co_detected_viirs_per_modis:
+      coDetectedModisObs > 0 ? roundTo(coDetectedViirsObs / coDetectedModisObs, 2) : null,
+    co_detected_modis_frp_mw: roundTo(coDetectedModisFrp, 2),
+    co_detected_viirs_frp_mw: roundTo(coDetectedViirsFrp, 2),
+    clusters: clusters.slice(0, maxReturnedClusters),
   };
 }

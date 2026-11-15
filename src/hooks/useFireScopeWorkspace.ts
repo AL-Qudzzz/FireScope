@@ -9,17 +9,15 @@ import { DockToolId } from '../components/ToolPanels';
 import { PRESET_AOIS } from '../data/firmsArchiveData';
 import { calculateGeometryMeasurement } from '../science/fireScience';
 import {
-  computeCalendarFromState,
+  createEmptyCalendarAnalytics,
   fetchBoundedObservationsFromApi,
   fetchCalendarAnalyticsFromApi,
   fetchDataStatusFromApi,
-  fetchLiveEonetForClient,
   fetchMapGridFromApi,
   fetchMapHotspotsFromApi,
   generateProvenanceCsv,
   getActiveAoi,
   getLocalDataStatus,
-  queryBoundedObservations,
 } from '../services/firescopeApi';
 import {
   AoiDefinition,
@@ -27,6 +25,8 @@ import {
   BoundingBox,
   CalendarAnalyticsResponse,
   CanonicalObservation,
+  CoLocationSummary,
+  DataSourceBacking,
   DataStatusResponse,
   GeoPoint,
   Granularity,
@@ -210,9 +210,43 @@ export function useFireScopeWorkspace() {
           };
         }
 
-        if (
+        const seededGlobalPresetIds = [
+          'california-sierra',
+          'para-amazon',
+          'congo-zambezi-africa',
+          'kakadu-savanna',
+        ];
+        const isSwitchingAoi =
           (patch.aoiId !== undefined || patch.customAoi !== undefined) &&
-          patch.startDate === undefined &&
+          patch.startDate === undefined;
+
+        if (isSwitchingAoi && seededGlobalPresetIds.includes(targetAoi.id)) {
+          const seededWindows = [
+            { start: '2024-10-15', end: '2024-11-14' },
+            { start: '2025-10-15', end: '2025-11-14' },
+            { start: '2026-10-01', end: liveMaxDate > '2026-11-15' ? liveMaxDate : '2026-11-15' },
+          ];
+          const overlapsSeededOrLive =
+            seededWindows.some(
+              (w) => prev.startDate <= w.end && prev.endDate >= w.start
+            ) ||
+            (prev.startDate <= liveMaxDate && prev.endDate >= liveMinDate);
+
+          if (!overlapsSeededOrLive) {
+            return {
+              ...prev,
+              ...patch,
+              startDate: '2026-10-15',
+              endDate: liveMaxDate >= '2026-10-15' ? liveMaxDate : '2026-11-13',
+              granularity: 'day',
+              selectedBinKey: null,
+              selectedObservationId: null,
+            };
+          }
+        }
+
+        if (
+          isSwitchingAoi &&
           prev.startDate < '2024-01-01' &&
           !isAoiInIndonesiaArchive(targetAoi)
         ) {
@@ -236,7 +270,6 @@ export function useFireScopeWorkspace() {
   );
 
   const activeAoi = useMemo(() => getActiveAoi(queryState), [queryState]);
-  const [liveEonetRecords, setLiveEonetRecords] = useState<CanonicalObservation[]>([]);
 
   const [mapViewport, setMapViewport] = useState<{
     west: number;
@@ -280,12 +313,16 @@ export function useFireScopeWorkspace() {
     excludedOffshoreCount: number;
     sampled: boolean;
     isLoading: boolean;
+    dataBacking?: DataSourceBacking;
+    sources?: string[];
   }>({
     totalInViewport: 0,
     totalGlobal: 0,
     excludedOffshoreCount: 0,
     sampled: false,
     isLoading: true,
+    dataBacking: undefined,
+    sources: [],
   });
 
   const [mapDisplayMode, setMapDisplayMode] = useState<MapDisplayMode>('points');
@@ -316,21 +353,6 @@ export function useFireScopeWorkspace() {
             ...prev,
             startDate: status.live_firms_min_date!,
             endDate: status.live_firms_max_date!,
-          }));
-        }
-      })
-      .catch(() => {});
-
-    fetchLiveEonetForClient()
-      .then((res) => {
-        if (isCancelled) return;
-        if (res.connected && res.items.length > 0) {
-          setLiveEonetRecords(res.items);
-          setDataStatus((prev) => ({
-            ...prev,
-            live_eonet_connected: true,
-            live_eonet_event_count: res.items.length,
-            live_eonet_synced_at_utc: res.syncedAtUtc,
           }));
         }
       })
@@ -396,8 +418,14 @@ export function useFireScopeWorkspace() {
             excludedOffshoreCount: res.excluded_offshore_count ?? 0,
             sampled: res.sampled,
             isLoading: false,
+            dataBacking: res.data_backing,
+            sources: res.sources,
           });
-          if (res.total_global_24h > 0) {
+          const includesLiveStream =
+            res.data_backing === 'LIVE_NASA_FIRMS' ||
+            res.data_backing === 'HYBRID_PARQUET_AND_LIVE' ||
+            res.data_backing === 'HYBRID_ARCHIVE_AND_LIVE';
+          if (includesLiveStream && res.total_global_24h > 0) {
             setDataStatus((prev) => ({
               ...prev,
               data_mode: res.data_mode,
@@ -531,9 +559,9 @@ export function useFireScopeWorkspace() {
     });
   };
 
-  const localCalendarAnalytics = useMemo(
-    () => computeCalendarFromState(queryState, liveEonetRecords),
-    [queryState, liveEonetRecords]
+  const emptyCalendarAnalytics = useMemo(
+    () => createEmptyCalendarAnalytics(queryState),
+    [queryState]
   );
   const [serverCalendarAnalytics, setServerCalendarAnalytics] =
     useState<CalendarAnalyticsResponse | null>(null);
@@ -582,7 +610,7 @@ export function useFireScopeWorkspace() {
     calendarRetryNonce,
   ]);
 
-  const calendarAnalytics = serverCalendarAnalytics ?? localCalendarAnalytics;
+  const calendarAnalytics = serverCalendarAnalytics ?? emptyCalendarAnalytics;
 
   const selectedBin = useMemo(() => {
     if (calendarAnalytics.series.length === 0) return null;
@@ -598,25 +626,16 @@ export function useFireScopeWorkspace() {
     return withRecords ?? calendarAnalytics.series[calendarAnalytics.series.length - 1];
   }, [calendarAnalytics.series, queryState.selectedBinKey]);
 
-  const localSelectedBinResult = useMemo(() => {
-    if (!selectedBin) return { items: [] as CanonicalObservation[], total: 0 };
-    const res = queryBoundedObservations({
-      state: queryState,
-      liveEonetRecords,
-      startUtc: selectedBin.time_bin_start_utc,
-      endUtc: selectedBin.time_bin_end_utc,
-      limit: 150,
-    });
-    return { items: res.items, total: res.total_matching };
-  }, [queryState, liveEonetRecords, selectedBin]);
-
   const [serverSelectedBinObservations, setServerSelectedBinObservations] =
     useState<CanonicalObservation[] | null>(null);
   const [serverSelectedBinTotal, setServerSelectedBinTotal] = useState<number | null>(null);
+  const [serverSelectedBinCoLocation, setServerSelectedBinCoLocation] =
+    useState<CoLocationSummary | null>(null);
   const [isBinObservationsLoading, setIsBinObservationsLoading] = useState<boolean>(false);
 
   useEffect(() => {
     if (!selectedBin) {
+      setServerSelectedBinCoLocation(null);
       setIsBinObservationsLoading(false);
       return;
     }
@@ -635,9 +654,11 @@ export function useFireScopeWorkspace() {
           if (res) {
             setServerSelectedBinObservations(res.items);
             setServerSelectedBinTotal(res.total_matching);
+            setServerSelectedBinCoLocation(res.co_location ?? null);
           } else {
             setServerSelectedBinObservations(null);
             setServerSelectedBinTotal(null);
+            setServerSelectedBinCoLocation(null);
           }
           setIsBinObservationsLoading(false);
         }
@@ -646,6 +667,7 @@ export function useFireScopeWorkspace() {
         if (!controller.signal.aborted) {
           setServerSelectedBinObservations(null);
           setServerSelectedBinTotal(null);
+          setServerSelectedBinCoLocation(null);
           setIsBinObservationsLoading(false);
         }
       });
@@ -663,10 +685,10 @@ export function useFireScopeWorkspace() {
     refreshNonce,
   ]);
 
-  const selectedBinObservations =
-    serverSelectedBinObservations ?? localSelectedBinResult.items;
-  const selectedBinTotalMatching =
-    serverSelectedBinTotal ?? localSelectedBinResult.total;
+  const selectedBinObservations = serverSelectedBinObservations ?? [];
+  const selectedBinTotalMatching = serverSelectedBinTotal ?? 0;
+  const selectedBinCoLocation =
+    serverSelectedBinCoLocation ?? selectedBin?.co_location ?? null;
 
   const selectedObservation = useMemo<CanonicalObservation | null>(() => {
     if (!queryState.selectedObservationId) return null;
@@ -908,6 +930,7 @@ export function useFireScopeWorkspace() {
     selectedBin,
     selectedBinObservations,
     selectedBinTotalMatching,
+    selectedBinCoLocation,
     isBinObservationsLoading,
     selectedObservation,
     showToast,

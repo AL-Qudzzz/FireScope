@@ -30,6 +30,9 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
   const { series, query, harmonization } = analytics;
   const diag = harmonization?.diagnostics;
   const harmonizedPoints = harmonization?.points ?? [];
+  const hasExperimentalM3 = Boolean(harmonization && harmonizedPoints.length > 0);
+  const effectiveBreakdownMode =
+    breakdownMode === 'harmonized' && !hasExperimentalM3 ? 'sensor' : breakdownMode;
 
   const harmonizedByKey = new Map(harmonizedPoints.map((pt) => [pt.bin_key, pt]));
 
@@ -69,9 +72,9 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
   );
 
   const effectiveMax =
-    breakdownMode === 'platform'
+    effectiveBreakdownMode === 'platform'
       ? maxPlatformCount
-      : breakdownMode === 'harmonized'
+      : effectiveBreakdownMode === 'harmonized'
       ? maxHarmonizedVal
       : maxSensorVal;
   const yTicks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => Math.round(effectiveMax * ratio));
@@ -100,9 +103,9 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
             Sensor &amp; Platform Time-Series Comparison
           </h2>
           <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-muted)]">
-            {breakdownMode === 'platform'
+            {effectiveBreakdownMode === 'platform'
               ? 'Unit: Records / Platform'
-              : breakdownMode === 'harmonized'
+              : effectiveBreakdownMode === 'harmonized'
               ? query.metric === 'frp_mw'
                 ? 'Unit: 2-Sat MODIS-Eq FRP (MW)'
                 : 'Unit: 2-Sat MODIS-Eq Detections'
@@ -135,7 +138,7 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
             type="button"
             onClick={() => setBreakdownMode('sensor')}
             className={`px-2.5 py-1 rounded font-medium transition-colors ${
-              breakdownMode === 'sensor'
+              effectiveBreakdownMode === 'sensor'
                 ? 'bg-[var(--surface-1)] text-[var(--text-primary)] shadow-xs'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
@@ -146,30 +149,32 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
             type="button"
             onClick={() => setBreakdownMode('platform')}
             className={`px-2.5 py-1 rounded font-medium transition-colors ${
-              breakdownMode === 'platform'
+              effectiveBreakdownMode === 'platform'
                 ? 'bg-[var(--surface-1)] text-[var(--text-primary)] shadow-xs'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
             5-Platform Split
           </button>
-          <button
-            type="button"
-            onClick={() => setBreakdownMode('harmonized')}
-            className={`px-2.5 py-1 rounded font-medium transition-colors ${
-              breakdownMode === 'harmonized'
-                ? 'bg-[var(--surface-1)] text-[var(--text-primary)] shadow-xs'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            Harmonized Bridge (M3)
-          </button>
+          {hasExperimentalM3 && (
+            <button
+              type="button"
+              onClick={() => setBreakdownMode('harmonized')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                effectiveBreakdownMode === 'harmonized'
+                  ? 'bg-[var(--surface-1)] text-[var(--text-primary)] shadow-xs'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Harmonized Bridge (M3)
+            </button>
+          )}
         </div>
       </div>
 
       {/* Legend */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-        {breakdownMode === 'sensor' ? (
+        {effectiveBreakdownMode === 'sensor' ? (
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-3 bg-[var(--modis-fill)] inline-block rounded-[1px]" />
@@ -184,7 +189,7 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
               </span>
             </div>
           </div>
-        ) : breakdownMode === 'harmonized' ? (
+        ) : effectiveBreakdownMode === 'harmonized' ? (
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-3 bg-[var(--success)] inline-block rounded-[1px]" />
@@ -226,7 +231,7 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
       </div>
 
       {/* Empirical M3 Bridge Validation Diagnostics Strip */}
-      {breakdownMode === 'harmonized' && diag && (
+      {effectiveBreakdownMode === 'harmonized' && diag && (
         <div className="rounded border border-[var(--border-subtle)] bg-[var(--surface-2)]/45 px-3 py-2 flex flex-wrap items-center justify-between gap-3 text-[11px]">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
             <div>
@@ -381,7 +386,7 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
                     }`}
                   >
                     <div className="w-full flex-1 flex items-end justify-center pb-0.5 min-h-0">
-                      {!isMissing && breakdownMode === 'sensor' && (
+                      {!isMissing && effectiveBreakdownMode === 'sensor' && (
                         <div className="w-full h-full flex items-end justify-center gap-1">
                           {(query.sensor === 'ALL' || query.sensor === 'MODIS') && (
                             <div className="h-full flex flex-col justify-end items-center gap-1">
@@ -416,7 +421,7 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
                         </div>
                       )}
 
-                      {!isMissing && breakdownMode === 'platform' && (
+                      {!isMissing && effectiveBreakdownMode === 'platform' && (
                         <div className="w-full h-full flex items-end justify-center gap-[2px]">
                           {(['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'] as PlatformId[]).map(
                             (pid) => {
@@ -440,7 +445,7 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
                         </div>
                       )}
 
-                      {!isMissing && breakdownMode === 'harmonized' && (() => {
+                      {!isMissing && effectiveBreakdownMode === 'harmonized' && (() => {
                         const pt = harmonizedByKey.get(bin.bin_key);
                         const bridgedVal = pt?.bridged_modis_equiv ?? null;
                         const viirsCalibVal = pt?.viirs_calibrated_modis_equiv ?? null;

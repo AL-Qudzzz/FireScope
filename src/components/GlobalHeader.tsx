@@ -167,17 +167,57 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('data-sources')}
-          title="Live NASA FIRMS EOSDIS data status — Click to inspect Data Sources"
+          title={
+            dataStatus.live_firms_connected
+              ? 'Live NASA FIRMS EOSDIS data status — Click to inspect Data Sources'
+              : dataStatus.live_eonet_connected
+              ? 'Live NASA EONET v3 wildfire stream + NASA Archive — Click to inspect Data Sources'
+              : 'Live NASA feeds offline; running in NASA Archive Mode — Click to inspect Data Sources'
+          }
+          data-testid="header-data-status-pill"
           className="min-h-[36px] md:min-h-0 h-8 px-2 sm:px-2.5 rounded-md bg-[var(--surface-2)] hover:bg-[var(--surface-3)] border border-[var(--border-subtle)] flex items-center gap-1.5 text-[10px] sm:text-[11px] transition-colors whitespace-nowrap shrink-0"
         >
-          <span className="w-2 h-2 rounded-full bg-[var(--success)] inline-block shrink-0" />
-          <span className="font-mono font-semibold text-[var(--success)] sm:hidden">
-            LIVE
+          <span
+            className={`w-2 h-2 rounded-full inline-block shrink-0 ${
+              dataStatus.live_firms_connected
+                ? 'bg-[var(--success)]'
+                : dataStatus.live_eonet_connected
+                ? 'bg-[var(--warning)]'
+                : 'bg-[var(--text-muted)]'
+            }`}
+          />
+          <span
+            className={`font-mono font-semibold sm:hidden ${
+              dataStatus.live_firms_connected
+                ? 'text-[var(--success)]'
+                : dataStatus.live_eonet_connected
+                ? 'text-[var(--warning)]'
+                : 'text-[var(--text-secondary)]'
+            }`}
+          >
+            {dataStatus.live_firms_connected
+              ? 'LIVE'
+              : dataStatus.live_eonet_connected
+              ? 'EONET'
+              : 'ARCHIVE'}
           </span>
-          <span className="font-mono font-semibold text-[var(--success)] hidden sm:inline">
-            {dataStatus.live_firms_connected ? 'LIVE FIRMS' : 'LIVE EONET'}
+          <span
+            className={`font-mono font-semibold hidden sm:inline ${
+              dataStatus.live_firms_connected
+                ? 'text-[var(--success)]'
+                : dataStatus.live_eonet_connected
+                ? 'text-[var(--warning)]'
+                : 'text-[var(--text-secondary)]'
+            }`}
+          >
+            {dataStatus.live_firms_connected
+              ? 'LIVE NASA FIRMS'
+              : dataStatus.live_eonet_connected
+              ? 'LIVE EONET + ARCHIVE'
+              : 'NASA ARCHIVE MODE'}
           </span>
-          {typeof dataStatus.live_firms_count === 'number' &&
+          {dataStatus.live_firms_connected &&
+          typeof dataStatus.live_firms_count === 'number' &&
           dataStatus.live_firms_count > 0 ? (
             <>
               <span className="hidden md:inline text-[var(--text-muted)]">·</span>
@@ -186,6 +226,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               </span>
             </>
           ) : (
+            dataStatus.live_eonet_connected &&
             typeof dataStatus.live_eonet_event_count === 'number' &&
             dataStatus.live_eonet_event_count > 0 && (
               <>

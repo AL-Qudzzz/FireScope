@@ -95,6 +95,7 @@ export default function App() {
     selectedBin,
     selectedBinObservations,
     selectedBinTotalMatching,
+    selectedBinCoLocation,
     isBinObservationsLoading,
     selectedObservation,
     showToast,
@@ -799,6 +800,7 @@ export default function App() {
                         selectedBin={selectedBin}
                         binObservations={selectedBinObservations}
                         totalMatchingObservations={selectedBinTotalMatching}
+                        binCoLocation={selectedBinCoLocation}
                         isLoadingObservations={isBinObservationsLoading}
                         selectedObservationId={queryState.selectedObservationId}
                         onSelectObservation={(obs) =>

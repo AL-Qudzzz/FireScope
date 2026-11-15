@@ -179,9 +179,14 @@ export interface CalendarBinRecord {
     MODIS: SeasonalBaselineComparison;
     VIIRS: SeasonalBaselineComparison;
   };
+  co_location?: CoLocationSummary;
 }
 
-export type DataMode = 'LIVE_NASA_FIRMS' | 'LIVE_NASA_EONET_HYBRID' | 'DEMO_SNAPSHOT';
+export type DataMode =
+  | 'LIVE_NASA_FIRMS'
+  | 'LIVE_NASA_EONET_HYBRID'
+  | 'NASA_ARCHIVE_BASELINE'
+  | 'DEMO_SNAPSHOT';
 
 export interface CalendarAnalyticsResponse {
   data_mode: DataMode;
@@ -241,6 +246,7 @@ export interface PaginatedObservationsResponse {
   total_matching: number;
   limit: number;
   next_cursor: string | null;
+  co_location?: CoLocationSummary;
   method: {
     id: 'M0_RAW';
     version: string;
@@ -254,6 +260,9 @@ export interface PaginatedObservationsResponse {
 
 export interface MapHotspotsResponse {
   data_mode: DataMode;
+  data_backing?: DataSourceBacking;
+  sources?: string[];
+  method_note?: string;
   total_global_24h: number;
   total_in_viewport: number;
   returned_count: number;
@@ -279,7 +288,11 @@ export interface FirmsFeedStatusEntry {
 export type DataSourceBacking =
   | 'LIVE_NASA_FIRMS'
   | 'REAL_NASA_ARCHIVE_PARQUET'
+  | 'GLOBAL_PRESETS_ARCHIVE'
+  | 'FIRMS_AREA_API'
   | 'HYBRID_PARQUET_AND_LIVE'
+  | 'HYBRID_ARCHIVE_AND_LIVE'
+  | 'NO_SOURCE_DATA'
   | 'DEMO_FIXTURE_BASELINE';
 
 export interface ParquetArchiveSourceFile {
@@ -335,6 +348,21 @@ export interface ParquetArchiveManifest {
   source_files: ParquetArchiveSourceFile[];
 }
 
+export interface GlobalPresetsArchiveStatus {
+  available: boolean;
+  schema_version: string;
+  generated_at_utc: string;
+  source: string;
+  aoi_ids: string[];
+  coverage_windows: Array<{ start_date: string; end_date: string }>;
+  canonical_rows_total: number;
+  bucket_rows_total: number;
+  representative_observations_total: number;
+  superseded_nrt_count: number;
+  exact_duplicates_removed: number;
+  checksums: string[];
+}
+
 export interface DataStatusResponse {
   status: 'OK' | 'PARTIAL_PLATFORM_GAP';
   data_mode: DataMode;
@@ -352,6 +380,7 @@ export interface DataStatusResponse {
   live_eonet_event_count?: number;
   live_eonet_synced_at_utc?: string;
   parquet_archive?: ParquetArchiveManifest | null;
+  global_presets_archive?: GlobalPresetsArchiveStatus | null;
   firms_area_api_constraints: {
     day_range_min: number;
     day_range_max: number;
@@ -378,13 +407,14 @@ export interface MapGridCell {
   modis_frp_sum_mw: number;
   viirs_frp_sum_mw: number;
   platforms: PlatformId[];
-  source_backing: 'PARQUET' | 'LIVE' | 'MIXED';
+  source_backing: 'PARQUET' | 'GLOBAL_PRESETS' | 'AREA_API' | 'LIVE' | 'MIXED';
 }
 
 export interface MapGridResponse {
   mode: 'grid' | 'cluster';
   cell_size_deg: number;
   data_backing: DataSourceBacking;
+  sources?: string[];
   total_detections_modis: number;
   total_detections_viirs: number;
   excluded_offshore_count?: number;
@@ -636,9 +666,12 @@ export interface CoLocationCluster {
 }
 
 export interface CoLocationSummary {
+  evaluation_scope?: 'FULL_BIN_POINTS' | 'FULL_BIN_GRID_BUCKETS';
   spatial_radius_km_rule: string;
   temporal_window_hours: number;
   total_observations: number;
+  modis_total_detections?: number;
+  viirs_total_detections?: number;
   total_clusters: number;
   co_detected_clusters: number;
   viirs_only_clusters: number;

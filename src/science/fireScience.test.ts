@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import {
   aggregateCalendarAnalytics,
   calculateGeometryMeasurement,
@@ -18,6 +20,7 @@ import {
 import { AoiDefinition, CalendarBinRecord, PlatformRegistryEntry } from '../types/firescope';
 import {
   clusterCrossSensorObservations,
+  computeBucketSpatialConcordance,
   computeHarmonizedSeries,
 } from './harmonizationScience';
 import {
@@ -1715,4 +1718,356 @@ test('globalPresetsService loads real compressed NASA FIRMS global archive clean
     endDate: '2026-11-15',
   });
   assert.ok(caObs.length > 100);
+});
+
+test('Regression #31 (Step 1): M3 harmonization is disabled by default unless explicitly opted in', () => {
+  const sampleRecs = [
+    parseModisRecord(
+      {
+        latitude: -2.2,
+        longitude: 114.0,
+        brightness: 325,
+        scan: 1.0,
+        track: 1.0,
+        acq_date: '2026-10-15',
+        acq_time: '0330',
+        satellite: 'T',
+        confidence: 82,
+        version: '6.1',
+        bright_t31: 295,
+        frp: 45,
+        daynight: 'D',
+      },
+      { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'test-sha', rowNumber: 1 }
+    ),
+    parseViirsRecord(
+      {
+        latitude: -2.2,
+        longitude: 114.0,
+        bright_ti4: 335,
+        scan: 0.4,
+        track: 0.4,
+        acq_date: '2026-10-15',
+        acq_time: '0520',
+        satellite: 'N20',
+        instrument: 'VIIRS',
+        confidence: 'h',
+        version: '2.0NRT',
+        bright_ti5: 292,
+        frp: 15,
+        daynight: 'D',
+      },
+      { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'test-sha', rowNumber: 2 }
+    ),
+  ];
+
+  const rawDefault = aggregateCalendarAnalytics({
+    allRawRecords: sampleRecs,
+    aoi: SAMPLE_AOI,
+    startDate: '2026-10-15',
+    endDate: '2026-10-15',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'NOAA20'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: TEST_PLATFORM_REGISTRY,
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+    latestAcquisitionUtc: '2026-10-15T05:20:00Z',
+    archiveChecksums: ['test-sha'],
+  });
+  assert.equal(rawDefault.harmonization, undefined);
+
+  const rawOptedIn = aggregateCalendarAnalytics({
+    allRawRecords: sampleRecs,
+    aoi: SAMPLE_AOI,
+    startDate: '2026-10-15',
+    endDate: '2026-10-15',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'NOAA20'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: TEST_PLATFORM_REGISTRY,
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+    latestAcquisitionUtc: '2026-10-15T05:20:00Z',
+    archiveChecksums: ['test-sha'],
+    enableExperimentalM3: true,
+  });
+  assert.ok(rawOptedIn.harmonization !== undefined);
+});
+
+test('Regression #32 (Step 2): Client fallback returns explicit NO_SOURCE_DATA without synthetic archive data', async () => {
+  const { createEmptyCalendarAnalytics, getLocalDataStatus } = await import(
+    '../services/firescopeApi'
+  );
+  const emptyCal = createEmptyCalendarAnalytics({
+    aoiId: 'california-sierra',
+    customAoi: null,
+    startDate: '2026-10-15',
+    endDate: '2026-10-17',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    modisMinConfidence: 0,
+    viirsCategories: ['low', 'nominal', 'high'],
+    excludeOffshore: true,
+    calendarMetric: 'detection_count',
+    controlDensity: 'overview',
+    selectedBinKey: null,
+    selectedObservationId: null,
+  });
+  assert.equal(emptyCal.series.length, 3);
+  assert.ok(emptyCal.series.every((b) => b.coverage_state === 'NO_SOURCE_DATA'));
+  assert.ok(
+    emptyCal.series.every(
+      (b) =>
+        b.values.MODIS === null &&
+        b.values.VIIRS === null &&
+        b.pooled_observation_count === null
+    )
+  );
+  assert.equal(emptyCal.provenance.sources.length, 0);
+
+  const localStatus = getLocalDataStatus();
+  assert.equal(localStatus.data_mode, 'NASA_ARCHIVE_BASELINE');
+  assert.equal(localStatus.raw_archive_manifest.length, 0);
+  assert.equal(localStatus.live_firms_connected, false);
+});
+
+test('Regression #33 (Step 4): coveredDateWindows marks uncovered bins as NO_SOURCE_DATA and straddling bins as PARTIAL_COVERAGE instead of false zeros', async () => {
+  const { aggregateCalendarFromBuckets } = await import('./comparisonScience');
+  const cal = aggregateCalendarFromBuckets({
+    buckets: [],
+    historicalMonthTotals: [],
+    aoi: SAMPLE_AOI,
+    startDate: '2026-10-08',
+    endDate: '2026-10-16',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'NOAA20'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: TEST_PLATFORM_REGISTRY,
+    archiveCoverageStart: '2026-10-10',
+    archiveCoverageEnd: '2026-10-14',
+    coveredDateWindows: [{ startDate: '2026-10-10', endDate: '2026-10-14' }],
+    dataMode: 'LIVE_NASA_FIRMS',
+    demoNotice: 'Coverage boundary test',
+    sources: ['Test Coverage Window'],
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+    latestAcquisitionUtc: '2026-10-14T23:59:59Z',
+    archiveChecksums: [],
+  });
+
+  const beforeBin = cal.series.find((b) => b.bin_key === '2026-10-09');
+  const coveredEmptyBin = cal.series.find((b) => b.bin_key === '2026-10-12');
+  const afterBin = cal.series.find((b) => b.bin_key === '2026-10-15');
+
+  assert.equal(beforeBin?.coverage_state, 'NO_SOURCE_DATA');
+  assert.equal(beforeBin?.values.MODIS, null);
+  assert.equal(beforeBin?.values.VIIRS, null);
+
+  assert.equal(coveredEmptyBin?.coverage_state, 'NO_DETECTIONS_IN_AVAILABLE_RECORDS');
+  assert.equal(coveredEmptyBin?.values.MODIS, 0);
+  assert.equal(coveredEmptyBin?.values.VIIRS, 0);
+
+  assert.equal(afterBin?.coverage_state, 'NO_SOURCE_DATA');
+  assert.equal(afterBin?.values.MODIS, null);
+  assert.equal(afterBin?.values.VIIRS, null);
+
+  const weekly = aggregateCalendarFromBuckets({
+    buckets: [],
+    historicalMonthTotals: [],
+    aoi: SAMPLE_AOI,
+    startDate: '2026-10-12',
+    endDate: '2026-10-18',
+    granularity: 'week',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'NOAA20'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: TEST_PLATFORM_REGISTRY,
+    archiveCoverageStart: '2026-10-10',
+    archiveCoverageEnd: '2026-10-14',
+    coveredDateWindows: [{ startDate: '2026-10-10', endDate: '2026-10-14' }],
+    dataMode: 'LIVE_NASA_FIRMS',
+    demoNotice: 'Partial week boundary test',
+    sources: ['Test Coverage Window'],
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+    latestAcquisitionUtc: '2026-10-14T23:59:59Z',
+    archiveChecksums: [],
+  });
+  assert.equal(weekly.series[0]?.coverage_state, 'PARTIAL_COVERAGE');
+});
+
+test('Regression #34 (Step 5): Full-bin spatial concordance evaluates 100% of >150 detections and grid buckets', async () => {
+  const bucketConcordance = computeBucketSpatialConcordance([
+    {
+      acq_date: '2026-10-15',
+      lat_bin: -2.25,
+      lng_bin: 114.0,
+      sensor: 'MODIS',
+      platform: 'TERRA',
+      detection_count: 5,
+      frp_sum_mw: 120,
+    },
+    {
+      acq_date: '2026-10-15',
+      lat_bin: -2.25,
+      lng_bin: 114.0,
+      sensor: 'VIIRS',
+      platform: 'NOAA20',
+      detection_count: 20,
+      frp_sum_mw: 210,
+    },
+    {
+      acq_date: '2026-10-15',
+      lat_bin: -2.5,
+      lng_bin: 114.25,
+      sensor: 'VIIRS',
+      platform: 'NOAA21',
+      detection_count: 140,
+      frp_sum_mw: 400,
+    },
+  ]);
+  assert.ok(bucketConcordance);
+  assert.equal(bucketConcordance.evaluation_scope, 'FULL_BIN_GRID_BUCKETS');
+  assert.equal(bucketConcordance.total_observations, 165);
+  assert.equal(bucketConcordance.co_detected_clusters, 1);
+  assert.equal(bucketConcordance.viirs_only_clusters, 1);
+  assert.equal(bucketConcordance.empirical_co_detected_viirs_per_modis, 4);
+
+  const { queryParquetBinSpatialConcordance } = await import('../services/parquetService');
+  const oneDayPts = await queryParquetBinSpatialConcordance({
+    bbox: { west: 109.5, south: -3.5, east: 117.5, north: 2.5 },
+    startUtc: '2026-10-15T00:00:00Z',
+    endUtc: '2026-10-15T23:59:59Z',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    modisMinConfidence: 0,
+    viirsCategories: ['low', 'nominal', 'high'],
+  });
+  assert.ok(oneDayPts);
+  assert.equal(oneDayPts.evaluation_scope, 'FULL_BIN_POINTS');
+  assert.ok(oneDayPts.total_observations > 150);
+
+  const largeRangeBuckets = await queryParquetBinSpatialConcordance({
+    bbox: { west: 113.2, south: -3.2, east: 115.0, north: -1.8 },
+    startUtc: '2026-10-01T00:00:00Z',
+    endUtc: '2026-10-15T23:59:59Z',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    modisMinConfidence: 0,
+    viirsCategories: ['low', 'nominal', 'high'],
+  });
+  assert.ok(largeRangeBuckets);
+  assert.equal(largeRangeBuckets.evaluation_scope, 'FULL_BIN_GRID_BUCKETS');
+  assert.ok(largeRangeBuckets.total_observations > 25000);
+});
+
+test('Regression #35 (Step 3 & Step 6): Express API exposes accurate /api/v1/data/status, M3 gate, and Global Presets provenance', async () => {
+  const { createApiApp } = await import('../../server');
+  const app = createApiApp({ preloadLiveFeeds: false, offlineMode: true });
+  const srv = http.createServer(app);
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+  const { port } = srv.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. /api/v1/data/status (Step 6): no DEMO_SNAPSHOT, exposes global_presets_archive & parquet_archive
+    const statusRes = await fetch(`${baseUrl}/api/v1/data/status`);
+    assert.equal(statusRes.status, 200);
+    const statusJson = await statusRes.json();
+    assert.notEqual(statusJson.data_mode, 'DEMO_SNAPSHOT');
+    assert.equal(statusJson.data_mode, 'NASA_ARCHIVE_BASELINE');
+    assert.equal(statusJson.parquet_archive?.available, true);
+    assert.equal(statusJson.global_presets_archive?.available, true);
+
+    // 2. /api/v1/analytics/calendar M3 default disabled even with include_harmonized=true (Step 1)
+    const calM3Res = await fetch(
+      `${baseUrl}/api/v1/analytics/calendar?aoi_id=kalimantan-peat&start_date=2026-10-15&end_date=2026-10-20&granularity=day&include_harmonized=true`
+    );
+    assert.equal(calM3Res.status, 200);
+    const calM3Json = await calM3Res.json();
+    assert.equal(calM3Json.harmonization, undefined);
+
+    // 3. /api/v1/map/hotspots & /api/v1/map/grid provenance for California Global Presets (Step 3)
+    const hotspotsRes = await fetch(
+      `${baseUrl}/api/v1/map/hotspots?aoi_id=california-sierra&west=-122.2&south=39.2&east=-120.4&north=40.6&start_date=2026-10-15&end_date=2026-10-25`
+    );
+    assert.equal(hotspotsRes.status, 200);
+    const hotspotsJson = await hotspotsRes.json();
+    assert.equal(hotspotsJson.data_backing, 'GLOBAL_PRESETS_ARCHIVE');
+    assert.ok(Array.isArray(hotspotsJson.sources) && hotspotsJson.sources.length > 0);
+    assert.ok(hotspotsJson.items.length > 0);
+
+    const gridRes = await fetch(
+      `${baseUrl}/api/v1/map/grid?aoi_id=california-sierra&west=-122.2&south=39.2&east=-120.4&north=40.6&start_date=2026-10-15&end_date=2026-10-25&mode=grid`
+    );
+    assert.equal(gridRes.status, 200);
+    const gridJson = await gridRes.json();
+    assert.equal(gridJson.data_backing, 'GLOBAL_PRESETS_ARCHIVE');
+    assert.ok(gridJson.cells.length > 0);
+    assert.ok(gridJson.cells.every((c: { source_backing: string }) => c.source_backing === 'GLOBAL_PRESETS'));
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      srv.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+test('Regression #36 (Step 4 & Step 5): Express API emits NO_SOURCE_DATA for uncovered historical ranges and 100%-bin co_location on paginated observations', async () => {
+  const { createApiApp } = await import('../../server');
+  const app = createApiApp({ preloadLiveFeeds: false, offlineMode: true });
+  const srv = http.createServer(app);
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+  const { port } = srv.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // /api/v1/analytics/calendar uncovered 2020 California window emits NO_SOURCE_DATA & nulls, not zeros (Step 4)
+    const uncoveredRes = await fetch(
+      `${baseUrl}/api/v1/analytics/calendar?aoi_id=california-sierra&start_date=2020-01-01&end_date=2020-01-05&granularity=day`
+    );
+    assert.equal(uncoveredRes.status, 200);
+    const uncoveredJson = await uncoveredRes.json();
+    assert.ok(uncoveredJson.demo_notice.startsWith('NO_SOURCE_DATA:'));
+    assert.equal(uncoveredJson.series.length, 5);
+    assert.ok(
+      uncoveredJson.series.every(
+        (b: CalendarBinRecord) =>
+          b.coverage_state === 'NO_SOURCE_DATA' &&
+          b.values.MODIS === null &&
+          b.values.VIIRS === null &&
+          b.pooled_observation_count === null
+      )
+    );
+
+    // /api/v1/observations returns bounded 10-row page + full-bin co_location over 100% of matching bin points (Step 5)
+    const obsRes = await fetch(
+      `${baseUrl}/api/v1/observations?aoi_id=indonesia-archipelago&start_datetime_utc=2026-10-15T00:00:00Z&end_datetime_utc=2026-10-15T23:59:59Z&limit=10`
+    );
+    assert.equal(obsRes.status, 200);
+    const obsJson = await obsRes.json();
+    assert.equal(obsJson.items.length, 10);
+    assert.ok(obsJson.total_matching > 150);
+    assert.ok(obsJson.co_location);
+    assert.equal(obsJson.co_location.evaluation_scope, 'FULL_BIN_POINTS');
+    assert.equal(obsJson.co_location.total_observations, obsJson.total_matching);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      srv.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
 });

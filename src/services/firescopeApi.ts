@@ -1,22 +1,18 @@
 import {
-  ALL_ARCHIVE_OBSERVATIONS,
   LATEST_ACQUISITION_UTC,
   PLATFORM_REGISTRY,
   PRESET_AOIS,
-  RAW_ARCHIVE_MANIFEST,
   RETRIEVED_AT_UTC,
 } from '../data/firmsArchiveData';
-import {
-  aggregateCalendarAnalytics,
-  deduplicateAndSupersedeObservations,
-  isPointInAoi,
-} from '../science/fireScience';
+import { generateTimeBins } from '../science/fireScience';
 import {
   AoiComparisonResponse,
   AoiDefinition,
   CalendarAnalyticsResponse,
+  CalendarBinRecord,
   CanonicalObservation,
   DataStatusResponse,
+  FrpSummaryStats,
   Granularity,
   MapGridResponse,
   MapHotspotsResponse,
@@ -42,9 +38,9 @@ export function getActiveAoi(state: SharedQueryState): AoiDefinition {
 export function getLocalDataStatus(): DataStatusResponse {
   return {
     status: 'PARTIAL_PLATFORM_GAP',
-    data_mode: 'DEMO_SNAPSHOT',
+    data_mode: 'NASA_ARCHIVE_BASELINE',
     demo_banner_text:
-      'NASA FIRMS Live Open Data Streams (MODIS C6.1 & VIIRS C2) + Archive Baseline.',
+      'Awaiting NASA FireScope backend status (/api/v1/data/status). Client synthetic archive fallback is disabled.',
     retrieved_at_utc: RETRIEVED_AT_UTC,
     latest_acquisition_utc: LATEST_ACQUISITION_UTC,
     live_firms_connected: false,
@@ -54,6 +50,8 @@ export function getLocalDataStatus(): DataStatusResponse {
     live_eonet_connected: false,
     live_eonet_event_count: 0,
     live_eonet_synced_at_utc: RETRIEVED_AT_UTC,
+    parquet_archive: null,
+    global_presets_archive: null,
     firms_area_api_constraints: {
       day_range_min: 1,
       day_range_max: 5,
@@ -62,7 +60,7 @@ export function getLocalDataStatus(): DataStatusResponse {
       rt_urt_retention_hours: 6,
     },
     platforms: PLATFORM_REGISTRY,
-    raw_archive_manifest: RAW_ARCHIVE_MANIFEST,
+    raw_archive_manifest: [],
   };
 }
 
@@ -393,123 +391,133 @@ export async function fetchLiveEonetForClient(): Promise<{
   }
 }
 
-export function computeCalendarFromState(
-  state: SharedQueryState,
-  liveEonetRecords: CanonicalObservation[] = []
-): CalendarAnalyticsResponse {
-  const aoi = getActiveAoi(state);
-  const combinedRecords =
-    liveEonetRecords.length > 0
-      ? [...liveEonetRecords, ...ALL_ARCHIVE_OBSERVATIONS]
-      : ALL_ARCHIVE_OBSERVATIONS;
-
-  const response = aggregateCalendarAnalytics({
-    allRawRecords: combinedRecords,
-    aoi,
-    startDate: state.startDate,
-    endDate: state.endDate,
-    granularity: state.granularity,
-    sensor: state.sensor,
-    platforms: state.platforms,
-    processingStatus: state.processingStatus,
-    dayNight: state.dayNight,
-    modisMinConfidence: state.modisMinConfidence,
-    viirsCategories: state.viirsCategories,
-    metric: state.calendarMetric,
-    platformRegistry: PLATFORM_REGISTRY,
-    retrievedAtUtc: RETRIEVED_AT_UTC,
-    latestAcquisitionUtc: LATEST_ACQUISITION_UTC,
-    archiveChecksums: RAW_ARCHIVE_MANIFEST.map((m) => m.sha256_checksum),
-  });
-
-  if (liveEonetRecords.length > 0) {
-    response.data_mode = 'LIVE_NASA_EONET_HYBRID';
-    response.demo_notice = `LIVE NASA EONET v3 Wildfire Stream (${liveEonetRecords.length} active events) + NASA FIRMS Archive Baseline (MODIS C6.1 & VIIRS C2).`;
-    response.provenance.sources = [
-      'NASA EONET v3 Live Wildfire API (https://eonet.gsfc.nasa.gov/api/v3/events?category=wildfires)',
-      ...response.provenance.sources,
-    ];
-  }
-
-  return response;
+function buildEmptyFrpSummary(sensor: 'MODIS' | 'VIIRS'): FrpSummaryStats {
+  return {
+    sensor,
+    unit: 'MW',
+    sum_mw: null,
+    mean_mw: null,
+    median_mw: null,
+    p90_mw: null,
+    max_mw: null,
+    valid_count: 0,
+    null_count: 0,
+    processing_status_note: 'No server observations loaded for this bin.',
+  };
 }
 
-export function queryBoundedObservations(params: {
-  state: SharedQueryState;
-  liveEonetRecords?: CanonicalObservation[];
-  startUtc?: string;
-  endUtc?: string;
-  limit?: number;
-  cursorOffset?: number;
-}): PaginatedObservationsResponse {
-  const { state, liveEonetRecords = [], limit = 50, cursorOffset = 0 } = params;
+export function createEmptyCalendarAnalytics(
+  state: SharedQueryState
+): CalendarAnalyticsResponse {
   const aoi = getActiveAoi(state);
-  const startMs = Date.parse(params.startUtc ?? `${state.startDate}T00:00:00Z`);
-  const endMs = Date.parse(params.endUtc ?? `${state.endDate}T23:59:59Z`);
+  const bins = generateTimeBins(state.startDate, state.endDate, state.granularity);
+  const emptyModisFrp = buildEmptyFrpSummary('MODIS');
+  const emptyViirsFrp = buildEmptyFrpSummary('VIIRS');
 
-  const combinedRecords =
-    liveEonetRecords.length > 0
-      ? [...liveEonetRecords, ...ALL_ARCHIVE_OBSERVATIONS]
-      : ALL_ARCHIVE_OBSERVATIONS;
-
-  const { canonical } = deduplicateAndSupersedeObservations(combinedRecords);
-
-  const matching = canonical
-    .filter((r) => {
-      if (!isPointInAoi(r.latitude, r.longitude, aoi)) return false;
-      const t = Date.parse(r.acq_datetime_utc);
-      if (t < startMs || t > endMs) return false;
-      if (state.sensor !== 'ALL' && r.sensor !== state.sensor) return false;
-      if (!state.platforms.includes(r.platform)) return false;
-      if (
-        state.processingStatus !== 'ALL' &&
-        r.processing_status !== state.processingStatus
-      ) {
-        return false;
-      }
-      if (state.dayNight !== 'ALL' && r.daynight_native !== state.dayNight) {
-        return false;
-      }
-      if (r.sensor === 'MODIS' && typeof r.confidence_native === 'number') {
-        if (r.confidence_native < state.modisMinConfidence) return false;
-      }
-      if (r.sensor === 'VIIRS' && typeof r.confidence_native === 'string') {
-        const cat = r.confidence_native as 'low' | 'nominal' | 'high';
-        if (
-          ['low', 'nominal', 'high'].includes(cat) &&
-          !state.viirsCategories.includes(cat)
-        ) {
-          return false;
-        }
-      }
-      return true;
-    })
-    .sort((a, b) => Date.parse(b.acq_datetime_utc) - Date.parse(a.acq_datetime_utc));
-
-  const slice = matching.slice(cursorOffset, cursorOffset + limit);
-  const nextCursor =
-    cursorOffset + limit < matching.length ? String(cursorOffset + limit) : null;
+  const series: CalendarBinRecord[] = bins.map((bin) => ({
+    bin_key: bin.binKey,
+    label: bin.label,
+    time_bin_start_utc: bin.startUtc,
+    time_bin_end_utc: bin.endUtc,
+    granularity: state.granularity,
+    coverage_state: 'NO_SOURCE_DATA',
+    values: {
+      MODIS: null,
+      VIIRS: null,
+    },
+    platform_breakdown: {
+      TERRA: 0,
+      AQUA: 0,
+      SNPP: 0,
+      NOAA20: 0,
+      NOAA21: 0,
+    },
+    processing_breakdown: {
+      NRT: 0,
+      RT: 0,
+      URT: 0,
+      STANDARD: 0,
+      UNKNOWN: 0,
+    },
+    frp_summary: {
+      MODIS: emptyModisFrp,
+      VIIRS: emptyViirsFrp,
+    },
+    confidence_breakdown: {
+      MODIS_numeric_bins: { low_0_29: 0, nominal_30_79: 0, high_80_100: 0 },
+      VIIRS_categorical: { low: 0, nominal: 0, high: 0 },
+    },
+    pooled_observation_count: null,
+    pooled_caveat:
+      'No server observations loaded (NO_SOURCE_DATA); synthetic client fallback is disabled.',
+    quality: {
+      coverage_note:
+        'NO_SOURCE_DATA: Server analytics response unavailable or still loading.',
+      active_platforms: [],
+      unavailable_platforms: state.platforms,
+      superseded_nrt_count: 0,
+      exact_duplicates_removed: 0,
+    },
+  }));
 
   return {
-    data_mode: liveEonetRecords.length > 0 ? 'LIVE_NASA_EONET_HYBRID' : 'DEMO_SNAPSHOT',
-    items: slice,
-    total_matching: matching.length,
-    limit,
-    next_cursor: nextCursor,
-    method: {
-      id: 'M0_RAW',
-      version: '1.0.0',
-      note: 'M0_RAW canonical observations preserving native sensor confidence, pixel footprint (scan/track), and processing version.',
+    data_mode: 'LIVE_NASA_FIRMS',
+    demo_notice:
+      'No server analytics snapshot loaded yet (NO_SOURCE_DATA). Client-side synthetic fallback is disabled.',
+    aoi: {
+      id: aoi.id,
+      name: aoi.name,
+      bbox: aoi.bbox,
+      timezone: aoi.timezone,
+      area_sq_km: aoi.areaSqKm,
     },
+    query: {
+      start_date: state.startDate,
+      end_date: state.endDate,
+      granularity: state.granularity,
+      metric: state.calendarMetric,
+      sensor: state.sensor,
+      platforms: state.platforms,
+      processing_status: state.processingStatus,
+      daynight: state.dayNight,
+    },
+    method: {
+      id: state.sensor === 'ALL' ? 'M2_COMPARATIVE' : 'M1_AGGREGATED',
+      version: '1.0.0',
+      description:
+        'Empty calendar skeleton shown while waiting for backend NASA observation aggregation. All sensor cells remain null (NO_SOURCE_DATA).',
+      formula: 'N_{s,p}(A, t) = sum_i 1(x_i in A, tau_i in t, s_i = s, p_i = p)',
+      non_claims: [
+        'NO_SOURCE_DATA cells indicate unloaded or unavailable backend responses, never zero fire activity.',
+      ],
+    },
+    totals: {
+      MODIS_detections: 0,
+      VIIRS_detections: 0,
+      pooled_observation_count: 0,
+      platform_totals: {
+        TERRA: 0,
+        AQUA: 0,
+        SNPP: 0,
+        NOAA20: 0,
+        NOAA21: 0,
+      },
+      MODIS_frp: emptyModisFrp,
+      VIIRS_frp: emptyViirsFrp,
+      superseded_nrt_total: 0,
+      duplicates_removed_total: 0,
+    },
+    thresholds: {
+      MODIS: [1, 10, 50, 200],
+      VIIRS: [1, 25, 125, 500],
+    },
+    series,
     provenance: {
-      sources:
-        liveEonetRecords.length > 0
-          ? [
-              'NASA EONET v3 Live Wildfire API',
-              'NASA FIRMS Archive Snapshot (MODIS C6.1 & VIIRS C2)',
-            ]
-          : ['NASA FIRMS Archive Snapshot (MODIS C6.1 & VIIRS C2)'],
-      retrieved_at_utc: RETRIEVED_AT_UTC,
+      sources: [],
+      collections: [],
+      retrieved_at_utc: 'Awaiting server response',
+      latest_acquisition_utc: 'None loaded',
+      archive_checksums: [],
     },
   };
 }

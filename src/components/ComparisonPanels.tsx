@@ -34,12 +34,19 @@ function backingProse(backing: DataSourceBacking): string {
   switch (backing) {
     case 'REAL_NASA_ARCHIVE_PARQUET':
       return 'NASA FIRMS Historical Archive (2001–2026)';
+    case 'GLOBAL_PRESETS_ARCHIVE':
+      return 'NASA FIRMS Global Presets Archive (Oct–Nov 2024–2026)';
+    case 'FIRMS_AREA_API':
+      return 'NASA FIRMS Area API Query';
     case 'HYBRID_PARQUET_AND_LIVE':
+    case 'HYBRID_ARCHIVE_AND_LIVE':
       return 'NASA FIRMS Archive + Live 24h Stream';
     case 'LIVE_NASA_FIRMS':
       return 'Live NASA FIRMS 24h Stream';
+    case 'NO_SOURCE_DATA':
+      return 'No NASA Source Coverage in Requested Window';
     default:
-      return 'Reference Baseline (Outside Indonesia Archive)';
+      return 'Unavailable Outside Covered Archives';
   }
 }
 
@@ -180,23 +187,27 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
     b.east - b.west > 60 || b.west < 85 || b.east > 150 || b.south < -16 || b.north > 12;
   const inIndonesiaBounds =
     parquetAvailable && activeAoi.id !== 'global-world' && overlapsIndonesia && !spansOutsideSeAsia;
+  const defaultNonIndoSeason: Exclude<SeasonWindowPreset, 'custom'> = inIndonesiaBounds
+    ? 'dry-jul-nov'
+    : 'recent-30d';
 
   const yearOptions = inIndonesiaBounds
     ? Array.from({ length: 26 }, (_, i) => 2026 - i) // 2026..2001
     : [2026, 2025, 2024];
 
-  const [seasonMode, setSeasonMode] = useState<SeasonWindowPreset>('dry-jul-nov');
+  const [seasonMode, setSeasonMode] = useState<SeasonWindowPreset>(defaultNonIndoSeason);
   const [yearA, setYearA] = useState<number>(2025);
   const [yearB, setYearB] = useState<number>(2026);
 
-  const initialB = formatYearRange(2026, 'dry-jul-nov', liveMaxDate);
-  const [periodAStart, setPeriodAStart] = useState<string>('2025-07-01');
-  const [periodAEnd, setPeriodAEnd] = useState<string>('2025-11-30');
+  const initialA = formatYearRange(2025, defaultNonIndoSeason, liveMaxDate);
+  const initialB = formatYearRange(2026, defaultNonIndoSeason, liveMaxDate);
+  const [periodAStart, setPeriodAStart] = useState<string>(initialA.start);
+  const [periodAEnd, setPeriodAEnd] = useState<string>(initialA.end);
   const [periodBStart, setPeriodBStart] = useState<string>(initialB.start);
   const [periodBEnd, setPeriodBEnd] = useState<string>(initialB.end);
-  const [periodALabel, setPeriodALabel] = useState<string>('Jul–Nov 2025');
+  const [periodALabel, setPeriodALabel] = useState<string>(initialA.label);
   const [periodBLabel, setPeriodBLabel] = useState<string>(initialB.label);
-  const [granularity, setGranularity] = useState<Granularity>('month');
+  const [granularity, setGranularity] = useState<Granularity>(initialA.granularity);
 
   const [data, setData] = useState<PeriodComparisonResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -231,13 +242,11 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
       (yearA < 2024 ||
         yearB < 2024 ||
         periodAStart < '2024-01-01' ||
-        periodBStart < '2024-01-01')
+        periodBStart < '2024-01-01' ||
+        seasonMode === 'dry-jul-nov' ||
+        seasonMode === 'full-year')
     ) {
-      applySimpleYearSelection(
-        2025,
-        2026,
-        seasonMode === 'custom' ? 'dry-jul-nov' : seasonMode
-      );
+      applySimpleYearSelection(2025, 2026, 'recent-30d');
     }
   }, [
     inIndonesiaBounds,
@@ -393,8 +402,8 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
           <div className="flex items-center gap-2 text-[var(--text-secondary)]">
             <Info className="w-4 h-4 text-[var(--viirs)] shrink-0" />
             <span>
-              You are viewing Global scope (baseline snapshot). Switch to an Indonesia archive region
-              to explore 2001–2026 NASA FIRMS historical records:
+              Global scope has 30-day Oct–Nov archives for 4 seeded presets (2024–2026) plus live
+              24h global streams. Switch to an Indonesia region for 2001–2026 multi-decade archives:
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -530,9 +539,13 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
             )}
             <button
               type="button"
-              onClick={() => applySimpleYearSelection(2025, 2026, 'dry-jul-nov')}
+              onClick={() =>
+                applySimpleYearSelection(2025, 2026, inIndonesiaBounds ? 'dry-jul-nov' : 'recent-30d')
+              }
               className={`px-2.5 py-1 rounded-[6px] border transition-colors whitespace-nowrap ${
-                yearA === 2025 && yearB === 2026 && seasonMode === 'dry-jul-nov'
+                yearA === 2025 &&
+                yearB === 2026 &&
+                seasonMode === (inIndonesiaBounds ? 'dry-jul-nov' : 'recent-30d')
                   ? 'bg-[var(--surface-2)] border-[var(--ember)] text-[var(--text-primary)] font-medium'
                   : 'bg-[var(--surface-1)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}

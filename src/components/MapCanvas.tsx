@@ -15,6 +15,7 @@ import {
   AoiDefinition,
   BoundingBox,
   CanonicalObservation,
+  DataSourceBacking,
   GeoPoint,
   MapDisplayMode,
   MapGridResponse,
@@ -51,6 +52,8 @@ interface MapHotspotsMeta {
   excludedOffshoreCount?: number;
   sampled: boolean;
   isLoading: boolean;
+  dataBacking?: DataSourceBacking;
+  sources?: string[];
 }
 
 interface MapCanvasProps {
@@ -715,11 +718,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const fillColor =
           ratio > 0.72 ? '#DC2626' : ratio > 0.4 ? '#F0783C' : '#F59E0B';
 
+        const backingLabel =
+          cell.source_backing === 'PARQUET'
+            ? 'PARQUET (NASA Archive)'
+            : cell.source_backing === 'GLOBAL_PRESETS'
+            ? 'GLOBAL_PRESETS (NASA Seeded Archive)'
+            : cell.source_backing === 'AREA_API'
+            ? 'AREA_API (NASA FIRMS Area API)'
+            : cell.source_backing === 'LIVE'
+            ? 'LIVE (FIRMS 24h)'
+            : 'MIXED (Archive + Live)';
+
         const tooltipHtml = `<div style="font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.4;">
           <strong style="color:#F0783C;">${cell.cell_size_deg}° Spatial Cell (${cell.lat_bin.toFixed(2)}°, ${cell.lng_bin.toFixed(2)}°)</strong><br/>
           MODIS (1km): <strong style="color:#FFB454;">${cell.modis_detections.toLocaleString()}</strong> det · ${cell.modis_frp_sum_mw.toLocaleString()} MW<br/>
           VIIRS (375m): <strong style="color:#61BDE0;">${cell.viirs_detections.toLocaleString()}</strong> det · ${cell.viirs_frp_sum_mw.toLocaleString()} MW<br/>
-          Pooled (unweighted): ${cell.pooled_observation_count.toLocaleString()} · Backing: ${cell.source_backing}<br/>
+          Pooled (unweighted): ${cell.pooled_observation_count.toLocaleString()} · Backing: ${backingLabel}<br/>
           Platforms: ${cell.platforms.join(', ') || '—'}
         </div>`;
 
@@ -1370,13 +1384,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             <span className="text-[var(--border-subtle)] hidden sm:inline shrink-0">|</span>
             <span className="hidden sm:inline truncate">
               {mapDisplayMode !== 'points' && gridData
-                ? `${mapDisplayMode.toUpperCase()} ${gridData.cell_size_deg}°: ${gridData.cell_count.toLocaleString()} cells · M:${gridData.total_detections_modis.toLocaleString()} V:${gridData.total_detections_viirs.toLocaleString()}`
+                ? `${mapDisplayMode.toUpperCase()} ${gridData.cell_size_deg}°: ${gridData.cell_count.toLocaleString()} cells · M:${gridData.total_detections_modis.toLocaleString()} V:${gridData.total_detections_viirs.toLocaleString()} · ${gridData.data_backing}`
                 : hotspotsMeta
                 ? hotspotsMeta.isLoading
                   ? 'Syncing NASA FIRMS...'
+                  : hotspotsMeta.dataBacking === 'NO_SOURCE_DATA'
+                  ? '0 points (NO_SOURCE_DATA for AOI/window)'
                   : hotspotsMeta.sampled
-                  ? `Showing ${visibleObservations.length.toLocaleString()} / ${hotspotsMeta.totalInViewport.toLocaleString()} FIRMS`
-                  : `FIRMS: ${visibleObservations.length.toLocaleString()} (100% live)`
+                  ? `Showing ${visibleObservations.length.toLocaleString()} / ${hotspotsMeta.totalInViewport.toLocaleString()} (${hotspotsMeta.dataBacking ?? 'FIRMS'})`
+                  : `Points: ${visibleObservations.length.toLocaleString()} (${
+                      hotspotsMeta.dataBacking === 'REAL_NASA_ARCHIVE_PARQUET'
+                        ? 'NASA Archive Parquet'
+                        : hotspotsMeta.dataBacking === 'GLOBAL_PRESETS_ARCHIVE'
+                        ? 'NASA Global Presets'
+                        : hotspotsMeta.dataBacking === 'FIRMS_AREA_API'
+                        ? 'NASA Area API'
+                        : hotspotsMeta.dataBacking === 'HYBRID_PARQUET_AND_LIVE' ||
+                          hotspotsMeta.dataBacking === 'HYBRID_ARCHIVE_AND_LIVE'
+                        ? 'Hybrid Archive + Live'
+                        : '100% live'
+                    })`
                 : `Visible: ${visibleObservations.length.toLocaleString()}`}
             </span>
           </>

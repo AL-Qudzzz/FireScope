@@ -5,6 +5,7 @@ import {
   AoiDefinition,
   BoundingBox,
   CanonicalObservation,
+  CoLocationSummary,
   MapGridCell,
   ParquetArchiveManifest,
   PlatformId,
@@ -14,6 +15,11 @@ import {
 } from '../types/firescope';
 import { DailyAggregateBucket } from '../science/comparisonScience';
 import { parseUtcAcquisitionTime } from '../science/fireScience';
+import {
+  clusterCrossSensorObservations,
+  computeBucketSpatialConcordance,
+  SpatialBucketInput,
+} from '../science/harmonizationScience';
 
 const PROCESSED_DIR = path.join(process.cwd(), 'data', 'processed');
 const DAILY_AGG_PARQUET = path.join(PROCESSED_DIR, 'daily_aggregates.parquet');
@@ -451,10 +457,7 @@ export async function queryParquetMapGrid(params: {
   });
 }
 
-/**
- * Bounded M0_RAW point observations query for 2026-10-01..2026-11-12 from recent_observations_2026.parquet.
- */
-export async function queryParquetRecentObservations(params: {
+export interface ParquetBinQueryParams {
   bbox: BoundingBox;
   startUtc: string;
   endUtc: string;
@@ -464,15 +467,11 @@ export async function queryParquetRecentObservations(params: {
   dayNight: 'ALL' | 'D' | 'N';
   modisMinConfidence: number;
   viirsCategories: Array<'low' | 'nominal' | 'high'>;
-  limit: number;
-  offset: number;
-}): Promise<{ items: CanonicalObservation[]; totalMatching: number } | null> {
-  if (!fs.existsSync(RECENT_OBS_PARQUET)) return null;
+}
 
+function buildRecentObsWhereClause(params: ParquetBinQueryParams): string {
   const startDate = params.startUtc.slice(0, 10);
   const endDate = params.endUtc.slice(0, 10);
-  if (endDate < '2026-10-01') return null;
-
   const baseWhere = buildFilterWhereClause({
     bbox: params.bbox,
     startDate: startDate < '2026-10-01' ? '2026-10-01' : startDate,
@@ -494,35 +493,15 @@ export async function queryParquetRecentObservations(params: {
         )})`
       : '';
 
-  const fullWhere = `${baseWhere} ${extraModisFilter}`;
+  return `${baseWhere} ${extraModisFilter}`;
+}
 
-  const { totalMatching, rows } = await withDuckDbQueue(async (conn) => {
-    const countRes = await conn.runAndReadAll(`
-      SELECT COUNT(*)::INTEGER AS total
-      FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
-      WHERE ${fullWhere};
-    `);
-    const total = Number(countRes.getRowObjects()[0]?.total ?? 0);
-    if (total === 0) {
-      return { totalMatching: 0, rows: [] as Array<Record<string, unknown>> };
-    }
-    const rowsRes = await conn.runAndReadAll(`
-      SELECT *
-      FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
-      WHERE ${fullWhere}
-      ORDER BY acq_date DESC, acq_time_native DESC
-      LIMIT ${Math.max(1, Math.min(250, params.limit))}
-      OFFSET ${Math.max(0, params.offset)};
-    `);
-    return { totalMatching: total, rows: rowsRes.getRowObjects() };
-  });
-
-  if (totalMatching === 0) {
-    return { items: [], totalMatching: 0 };
-  }
-
+function mapRecentRowsToCanonical(
+  rows: Array<Record<string, unknown>>,
+  offset = 0
+): CanonicalObservation[] {
   const retrievedAt = getParquetManifest()?.generated_at_utc ?? new Date().toISOString();
-  const items: CanonicalObservation[] = rows.map((r, idx) => {
+  return rows.map((r, idx) => {
     const sensor = String(r.sensor) as SensorId;
     const platform = String(r.platform) as PlatformId;
     const lat = Number(r.latitude);
@@ -574,7 +553,7 @@ export async function queryParquetRecentObservations(params: {
       collection: String(r.collection),
       source_retrieved_at_utc: retrievedAt,
       source_file_checksum: String(r.source_file_checksum),
-      source_row_number: params.offset + idx + 1,
+      source_row_number: offset + idx + 1,
       raw_attributes: {
         acq_date: acqDate,
         acq_time: paddedHhmm,
@@ -584,6 +563,185 @@ export async function queryParquetRecentObservations(params: {
       },
     };
   });
+}
 
-  return { items, totalMatching };
+/**
+ * Bounded M0_RAW point observations query for 2026-10-01..2026-11-12 from recent_observations_2026.parquet.
+ */
+export async function queryParquetRecentObservations(
+  params: ParquetBinQueryParams & {
+    limit: number;
+    offset: number;
+  }
+): Promise<{ items: CanonicalObservation[]; totalMatching: number } | null> {
+  if (!fs.existsSync(RECENT_OBS_PARQUET)) return null;
+
+  const endDate = params.endUtc.slice(0, 10);
+  if (endDate < '2026-10-01') return null;
+
+  const fullWhere = buildRecentObsWhereClause(params);
+
+  const { totalMatching, rows } = await withDuckDbQueue(async (conn) => {
+    const countRes = await conn.runAndReadAll(`
+      SELECT COUNT(*)::INTEGER AS total
+      FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
+      WHERE ${fullWhere};
+    `);
+    const total = Number(countRes.getRowObjects()[0]?.total ?? 0);
+    if (total === 0) {
+      return { totalMatching: 0, rows: [] as Array<Record<string, unknown>> };
+    }
+    const rowsRes = await conn.runAndReadAll(`
+      SELECT *
+      FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
+      WHERE ${fullWhere}
+      ORDER BY acq_date DESC, acq_time_native DESC
+      LIMIT ${Math.max(1, Math.min(5000, params.limit))}
+      OFFSET ${Math.max(0, params.offset)};
+    `);
+    return { totalMatching: total, rows: rowsRes.getRowObjects() };
+  });
+
+  if (totalMatching === 0) {
+    return { items: [], totalMatching: 0 };
+  }
+
+  return { items: mapRecentRowsToCanonical(rows, params.offset), totalMatching };
+}
+
+/**
+ * Loads up to maxRows matching M0_RAW observations from recent_observations_2026.parquet
+ * for full-bin spatial concordance analysis without client pagination truncation.
+ */
+export async function queryParquetAllBinPointObservations(
+  params: ParquetBinQueryParams,
+  maxRows = 50000
+): Promise<CanonicalObservation[]> {
+  if (!fs.existsSync(RECENT_OBS_PARQUET)) return [];
+  const endDate = params.endUtc.slice(0, 10);
+  if (endDate < '2026-10-01') return [];
+
+  const cacheKey = `allRecentObs:${JSON.stringify({
+    b: params.bbox,
+    s: params.startUtc.slice(0, 10),
+    e: endDate,
+    sn: params.sensor,
+    p: [...params.platforms].sort(),
+    ps: params.processingStatus,
+    dn: params.dayNight,
+    mc: params.modisMinConfidence,
+    vc: [...params.viirsCategories].sort(),
+    m: maxRows,
+  })}`;
+
+  return withParquetCache(cacheKey, async () => {
+    const fullWhere = buildRecentObsWhereClause(params);
+    const rows = await withDuckDbQueue(async (conn) => {
+      const rowsRes = await conn.runAndReadAll(`
+        SELECT *
+        FROM read_parquet(${sqlStr(RECENT_OBS_PARQUET)})
+        WHERE ${fullWhere}
+        ORDER BY acq_date DESC, acq_time_native DESC
+        LIMIT ${Math.max(1, Math.min(100000, maxRows))};
+      `);
+      return rowsRes.getRowObjects();
+    });
+    return mapRecentRowsToCanonical(rows, 0);
+  });
+}
+
+/**
+ * Queries daily 0.25-deg spatial buckets (MODIS/VIIRS by acq_date, lat_bin, lng_bin, platform)
+ * from daily_aggregates.parquet for full-bin spatial concordance evaluation.
+ */
+export async function queryParquetSpatialBuckets(
+  params: ParquetBinQueryParams
+): Promise<SpatialBucketInput[]> {
+  const manifest = getParquetManifest();
+  if (!manifest?.available) return [];
+
+  const startDate = params.startUtc.slice(0, 10);
+  const endDate = params.endUtc.slice(0, 10);
+  const cacheKey = `binSpatialBuckets:${JSON.stringify({
+    b: params.bbox,
+    s: startDate,
+    e: endDate,
+    sn: params.sensor,
+    p: [...params.platforms].sort(),
+    ps: params.processingStatus,
+    dn: params.dayNight,
+    mc: params.modisMinConfidence,
+    vc: [...params.viirsCategories].sort(),
+  })}`;
+
+  return withParquetCache(cacheKey, async () => {
+    const whereSql = buildFilterWhereClause({
+      bbox: params.bbox,
+      startDate,
+      endDate,
+      sensor: params.sensor,
+      platforms: params.platforms,
+      processingStatus: params.processingStatus,
+      dayNight: params.dayNight,
+      modisMinConfidence: params.modisMinConfidence,
+      viirsCategories: params.viirsCategories,
+      useCellBins: true,
+    });
+
+    const rows = await withDuckDbQueue(async (conn) => {
+      const res = await conn.runAndReadAll(`
+        SELECT
+          acq_date,
+          lat_bin,
+          lng_bin,
+          sensor,
+          platform,
+          SUM(detection_count)::INTEGER AS detection_count,
+          SUM(frp_sum_mw)::DOUBLE AS frp_sum_mw
+        FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
+        WHERE ${whereSql}
+        GROUP BY acq_date, lat_bin, lng_bin, sensor, platform;
+      `);
+      return res.getRowObjects();
+    });
+
+    return rows.map((r) => ({
+      acq_date: String(r.acq_date),
+      lat_bin: Number(r.lat_bin),
+      lng_bin: Number(r.lng_bin),
+      sensor: String(r.sensor) as SensorId,
+      platform: String(r.platform) as PlatformId,
+      detection_count: Number(r.detection_count ?? 0),
+      frp_sum_mw: Number(r.frp_sum_mw ?? 0),
+    }));
+  });
+}
+
+const MAX_FULL_POINT_CONCORDANCE_ROWS = 25000;
+
+/**
+ * Computes full-bin spatial concordance over 100% of matching Parquet detections in a bin:
+ * - Uses full point clustering (`FULL_BIN_POINTS`) when the entire bin lies in 2026-10-01..2026-11-12
+ *   and contains <= 25,000 matching detections (zero truncation)
+ * - Uses full 0.25-deg daily grid bucket concordance (`FULL_BIN_GRID_BUCKETS`) for pre-2026-10-01
+ *   bins or > 25,000-detection national months so 100% of records are always included.
+ */
+export async function queryParquetBinSpatialConcordance(
+  params: ParquetBinQueryParams
+): Promise<CoLocationSummary | null> {
+  const startDate = params.startUtc.slice(0, 10);
+
+  if (startDate >= '2026-10-01' && fs.existsSync(RECENT_OBS_PARQUET)) {
+    const allObs = await queryParquetAllBinPointObservations(
+      params,
+      MAX_FULL_POINT_CONCORDANCE_ROWS + 1
+    );
+    if (allObs.length === 0) return null;
+    if (allObs.length <= MAX_FULL_POINT_CONCORDANCE_ROWS) {
+      return clusterCrossSensorObservations(allObs, 6, 200);
+    }
+  }
+
+  const spatialBuckets = await queryParquetSpatialBuckets(params);
+  return computeBucketSpatialConcordance(spatialBuckets, 200);
 }

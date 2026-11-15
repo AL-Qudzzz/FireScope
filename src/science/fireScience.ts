@@ -849,6 +849,7 @@ export function aggregateCalendarAnalytics(params: {
   retrievedAtUtc: string;
   latestAcquisitionUtc: string;
   archiveChecksums: string[];
+  enableExperimentalM3?: boolean;
 }): CalendarAnalyticsResponse {
   const {
     allRawRecords,
@@ -869,6 +870,7 @@ export function aggregateCalendarAnalytics(params: {
     retrievedAtUtc,
     latestAcquisitionUtc,
     archiveChecksums,
+    enableExperimentalM3 = false,
   } = params;
 
   // Step 1: filter to AOI
@@ -1181,7 +1183,9 @@ export function aggregateCalendarAnalytics(params: {
       VIIRS: thresholdsViirs,
     },
     series,
-    harmonization: computeHarmonizedSeries(series, metric),
+    ...(enableExperimentalM3
+      ? { harmonization: computeHarmonizedSeries(series, metric) }
+      : {}),
     provenance: {
       sources: ['NASA FIRMS Archive Snapshot', 'MODIS Collection 6.1', 'VIIRS 375m Collection 2'],
       collections: ['MODIS C6.1 (MCD14DL / MCD14ML)', 'VIIRS C2 (VNP14IMGTDL / VJ114IMGTDL / VJ214IMGTDL)'],

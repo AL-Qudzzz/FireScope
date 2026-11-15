@@ -7,6 +7,22 @@ import { FireScopeLockup } from './BrandLogo';
 export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
   dataStatus,
 }) => {
+  const activePlatformCount = dataStatus.platforms.filter((p) => p.status === 'ACTIVE').length;
+  const gapPlatformCount = dataStatus.platforms.length - activePlatformCount;
+  const snppPlatform = dataStatus.platforms.find((p) => p.platform_id === 'SNPP');
+  const checkedDate =
+    dataStatus.platforms
+      .find((p) => p.status_checked_at_utc)
+      ?.status_checked_at_utc?.slice(0, 10) ?? dataStatus.retrieved_at_utc.slice(0, 10);
+
+  const parquetFiles = dataStatus.parquet_archive?.source_files ?? [];
+  const parquetFileIds = new Set(parquetFiles.map((sf) => sf.file_id));
+  const parquetChecksums = new Set(parquetFiles.map((sf) => sf.sha256_checksum));
+  const extraManifestRows = dataStatus.raw_archive_manifest.filter(
+    (m) => !parquetFileIds.has(m.file_id) && !parquetChecksums.has(m.sha256_checksum)
+  );
+  const globalArchive = dataStatus.global_presets_archive;
+
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
       {/* Page Title */}
@@ -16,8 +32,8 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
             Data Sources, Platform Continuity &amp; Raw Archive Provenance
           </h1>
           <p className="text-[13px] text-[var(--text-secondary)] mt-1 max-w-3xl">
-            Dynamic status of active-fire satellite products, processing lifecycles, and
-            checksum-verified archive snapshots powering FireScope.
+            Dynamic status of live NASA FIRMS streams, DuckDB Parquet &amp; Global Presets archives,
+            processing lifecycles, and SHA-256 checksums powering FireScope.
           </p>
         </div>
 
@@ -36,7 +52,13 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
           </div>
           <div className="flex justify-between gap-6">
             <span className="text-[var(--text-secondary)]">Data Mode:</span>
-            <span className="text-[var(--warning)] font-semibold">
+            <span
+              className={`font-semibold ${
+                dataStatus.data_mode === 'LIVE_NASA_FIRMS'
+                  ? 'text-[var(--success)]'
+                  : 'text-[var(--warning)]'
+              }`}
+            >
               {dataStatus.data_mode}
             </span>
           </div>
@@ -85,14 +107,97 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
           <div className="flex items-center justify-between gap-2 text-[11px] font-medium text-[var(--text-muted)]">
             <span>04. Platform Continuity</span>
             <InfoPopover title="Platform Continuity" align="right">
-              VIIRS S-NPP archive listed through 2026-11-02; Terra, Aqua, NOAA-20 &amp; NOAA-21 active.
+              {snppPlatform && snppPlatform.status !== 'ACTIVE'
+                ? `VIIRS S-NPP archive listed through ${snppPlatform.last_observation_date}; ${activePlatformCount} platform(s) active in recent feeds.`
+                : `${activePlatformCount} platform(s) active across monitored NASA FIRMS feeds.`}
             </InfoPopover>
           </div>
-          <div className="text-[14px] font-mono font-semibold text-[var(--warning)]">
-            4 Active · 1 Historical Gap
+          <div
+            className={`text-[14px] font-mono font-semibold ${
+              gapPlatformCount > 0 ? 'text-[var(--warning)]' : 'text-[var(--success)]'
+            }`}
+          >
+            {activePlatformCount} Active
+            {gapPlatformCount > 0 ? ` · ${gapPlatformCount} Historical Gap` : ''}
           </div>
         </div>
       </div>
+
+      {/* Live NASA FIRMS & EONET Open-Data Feeds */}
+      <section
+        aria-label="Live NASA FIRMS and EONET Feeds"
+        data-testid="live-feeds-section"
+        className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-3"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
+              Live NASA FIRMS &amp; EONET Streams
+            </h2>
+            <p className="text-[12px] text-[var(--text-secondary)]">
+              {dataStatus.live_firms_connected
+                ? `Connected to official NASA FIRMS 24h Global CSV streams (${dataStatus.live_firms_min_date ?? '—'} → ${dataStatus.live_firms_max_date ?? '—'}).`
+                : dataStatus.live_eonet_connected
+                ? `Live NASA FIRMS CSV offline; NASA EONET v3 connected (${dataStatus.live_eonet_event_count ?? 0} wildfire events).`
+                : 'Live NASA network feeds offline; operating strictly from verified local NASA archives without synthetic fallback.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+            <span
+              className={`px-2 py-1 rounded bg-[var(--surface-2)] border font-semibold ${
+                dataStatus.live_firms_connected
+                  ? 'border-[var(--success)]/45 text-[var(--success)]'
+                  : 'border-[var(--border-subtle)] text-[var(--text-secondary)]'
+              }`}
+            >
+              {dataStatus.live_firms_connected
+                ? `${(dataStatus.live_firms_count ?? 0).toLocaleString()} Active 24h Detections`
+                : 'Live FIRMS Offline'}
+            </span>
+            <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
+              FIRMS Area API Key:{' '}
+              <strong className="text-[var(--text-primary)]">
+                {dataStatus.firms_map_key_configured ? 'Configured' : 'Not Configured'}
+              </strong>
+            </span>
+          </div>
+        </div>
+
+        {dataStatus.live_firms_feeds && dataStatus.live_firms_feeds.length > 0 && (
+          <div className="overflow-x-auto rounded-[6px] border border-[var(--border-subtle)]">
+            <table className="w-full text-left border-collapse text-[12px]">
+              <thead>
+                <tr className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">
+                  <th className="py-2 px-3">Stream Product</th>
+                  <th className="py-2 px-3">Platform</th>
+                  <th className="py-2 px-3 text-right">24h Detections</th>
+                  <th className="py-2 px-3">SHA-256 Digest</th>
+                  <th className="py-2 px-3">Endpoint</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)] font-mono text-[11px]">
+                {dataStatus.live_firms_feeds.map((feed) => (
+                  <tr key={feed.id} className="hover:bg-[var(--surface-2)]/60">
+                    <td className="py-2 px-3 text-[var(--text-primary)] font-semibold">
+                      {feed.product}
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-secondary)]">{feed.platform}</td>
+                    <td className="py-2 px-3 text-right text-[var(--success)] font-semibold tabular-nums">
+                      {feed.row_count.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-muted)]">
+                      {feed.sha256.slice(0, 20)}…
+                    </td>
+                    <td className="py-2 px-3 text-[var(--text-secondary)] truncate max-w-xs">
+                      {feed.source_url}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Platform Continuity Registry Table */}
       <section className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-3">
@@ -102,8 +207,8 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
               Satellite Platform Continuity Registry
             </h2>
             <p className="text-[12px] text-[var(--text-secondary)]">
-              Checked against NASA FIRMS Archive coverage (2026-11-13). Never interpret a platform
-              archive gap as a decline in physical fire activity.
+              Checked against NASA FIRMS Archive &amp; Live feed coverage ({checkedDate}). Never
+              interpret a platform archive gap as a decline in physical fire activity.
             </p>
           </div>
         </div>
@@ -167,7 +272,7 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
         </div>
       </section>
 
-      {/* Historical Archive Manifest (2001–2026, Official NASA FIRMS Records) */}
+      {/* Historical Archive Manifest (Dynamic Dates, Official NASA FIRMS Records) */}
       {dataStatus.parquet_archive?.available && (
         <section
           aria-label="NASA FIRMS Historical Archive"
@@ -177,12 +282,26 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
-                NASA FIRMS Historical Archive (2001–2026)
+                NASA FIRMS Historical Parquet Archive (
+                {dataStatus.parquet_archive.date_range.min_date.slice(0, 4)}–
+                {dataStatus.parquet_archive.date_range.max_date.slice(0, 4)})
               </h2>
               <p className="text-[12px] text-[var(--text-secondary)]">
-                Region: <strong className="text-[var(--text-primary)]">{dataStatus.parquet_archive.region_label}</strong> ·{' '}
-                Window: <span className="font-mono">{dataStatus.parquet_archive.date_range.min_date} → {dataStatus.parquet_archive.date_range.max_date}</span> ·{' '}
-                CRS: <span className="font-mono">{dataStatus.parquet_archive.crs}</span> ({dataStatus.parquet_archive.spatial_grid_resolution_deg}° grid)
+                Region:{' '}
+                <strong className="text-[var(--text-primary)]">
+                  {dataStatus.parquet_archive.region_label}
+                </strong>{' '}
+                · Window:{' '}
+                <span className="font-mono">
+                  {dataStatus.parquet_archive.date_range.min_date} →{' '}
+                  {dataStatus.parquet_archive.date_range.max_date}
+                </span>{' '}
+                · CRS: <span className="font-mono">{dataStatus.parquet_archive.crs}</span> (
+                {dataStatus.parquet_archive.spatial_grid_resolution_deg}° grid) · Deduplicated:{' '}
+                <span className="font-mono">
+                  {dataStatus.parquet_archive.exact_duplicates_removed.toLocaleString()} exact ·{' '}
+                  {dataStatus.parquet_archive.superseded_nrt_count.toLocaleString()} NRT superseded
+                </span>
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
@@ -190,8 +309,19 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
                 {dataStatus.parquet_archive.canonical_rows_total.toLocaleString()} Canonical Rows
               </span>
               <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
-                Daily Archive Dataset ({(dataStatus.parquet_archive.daily_aggregates_parquet.bytes / (1024 * 1024)).toFixed(1)} MB)
+                Daily Aggregates (
+                {(dataStatus.parquet_archive.daily_aggregates_parquet.bytes / (1024 * 1024)).toFixed(
+                  1
+                )}{' '}
+                MB)
               </span>
+              {dataStatus.parquet_archive.recent_observations_parquet && (
+                <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
+                  Recent M0 Points (
+                  {dataStatus.parquet_archive.recent_observations_parquet.rows.toLocaleString()} rows
+                  from {dataStatus.parquet_archive.recent_observations_parquet.min_date})
+                </span>
+              )}
             </div>
           </div>
 
@@ -216,6 +346,44 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
         </section>
       )}
 
+      {/* NASA FIRMS Global Presets Archive */}
+      {globalArchive?.available && (
+        <section
+          aria-label="NASA FIRMS Global Presets Archive"
+          data-testid="global-presets-archive-section"
+          className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-3"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
+                NASA FIRMS Seeded Global Presets Archive
+              </h2>
+              <p className="text-[12px] text-[var(--text-secondary)]">
+                Source: <span className="font-mono">{globalArchive.source}</span> · Basins:{' '}
+                <span className="font-mono text-[var(--text-primary)]">
+                  {globalArchive.aoi_ids.join(', ')}
+                </span>{' '}
+                · Windows:{' '}
+                <span className="font-mono">
+                  {globalArchive.coverage_windows
+                    .map((w) => `${w.start_date} → ${w.end_date}`)
+                    .join(', ')}
+                </span>
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+              <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--success)]/45 text-[var(--success)] font-semibold">
+                {globalArchive.canonical_rows_total.toLocaleString()} Canonical Rows
+              </span>
+              <span className="px-2 py-1 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
+                {globalArchive.bucket_rows_total.toLocaleString()} 0.25° Buckets ·{' '}
+                {globalArchive.representative_observations_total.toLocaleString()} Sample Points
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Immutable Raw Archive Manifest (SHA-256) */}
       <section className="bg-[var(--surface-1)] border border-[var(--border-subtle)] rounded-[8px] p-4 space-y-3">
         <div className="flex items-center gap-2">
@@ -226,11 +394,12 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
         </div>
         <p className="text-[12px] text-[var(--text-secondary)]">
           Raw source files are never mutated. Canonical records preserve original CSV row numbers
-          and SHA-256 digests for full audit traceability.
+          and SHA-256 digests for full audit traceability (Parquet archive files, Global Presets,
+          and live streams are listed separately without duplication).
         </p>
 
         <DisclosureAccordion
-          title="Raw Archive Files & SHA-256 Checksums"
+          title={`Raw Archive Files (${parquetFiles.length + extraManifestRows.length}) & Stream Digests`}
           summaryBadge="Audit manifest"
           defaultOpen={false}
         >
@@ -238,7 +407,7 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
             <table className="w-full text-left border-collapse text-[12px]">
               <thead>
                 <tr className="bg-[var(--surface-2)] border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">
-                  <th className="py-2 px-3">Filename</th>
+                  <th className="py-2 px-3">Source Group / Filename</th>
                   <th className="py-2 px-3">Product / Collection</th>
                   <th className="py-2 px-3">Platform</th>
                   <th className="py-2 px-3">Processing</th>
@@ -247,10 +416,13 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)] font-mono text-[11px]">
-                {(dataStatus.parquet_archive?.source_files ?? []).map((sf) => (
-                  <tr key={sf.file_id} className="hover:bg-[var(--surface-2)]/60 bg-[var(--app-bg)]/40">
+                {parquetFiles.map((sf) => (
+                  <tr
+                    key={`pq-${sf.file_id}`}
+                    className="hover:bg-[var(--surface-2)]/60 bg-[var(--app-bg)]/40"
+                  >
                     <td className="py-2 px-3 text-[var(--text-primary)]">
-                      {sf.zip_filename} → {sf.filename}
+                      [Parquet Archive] {sf.zip_filename} → {sf.filename}
                     </td>
                     <td className="py-2 px-3 text-[var(--text-secondary)]">
                       {sf.source_product} ({sf.collection})
@@ -267,8 +439,8 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
                     </td>
                   </tr>
                 ))}
-                {dataStatus.raw_archive_manifest.map((m) => (
-                  <tr key={m.file_id} className="hover:bg-[var(--surface-2)]/60">
+                {extraManifestRows.map((m) => (
+                  <tr key={`extra-${m.file_id}`} className="hover:bg-[var(--surface-2)]/60">
                     <td className="py-2 px-3 text-[var(--text-primary)]">{m.filename}</td>
                     <td className="py-2 px-3 text-[var(--text-secondary)]">
                       {m.source_product} ({m.collection})
@@ -278,13 +450,30 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
                       {m.processing_status}
                     </td>
                     <td className="py-2 px-3 text-right text-[var(--text-primary)] tabular-nums">
-                      {m.row_count}
+                      {m.row_count.toLocaleString()}
                     </td>
                     <td className="py-2 px-3 text-[var(--text-muted)]">
                       {m.sha256_checksum.slice(0, 24)}…
                     </td>
                   </tr>
                 ))}
+                {globalArchive?.available &&
+                  globalArchive.checksums.map((chk, idx) => (
+                    <tr key={`gp-${idx}`} className="hover:bg-[var(--surface-2)]/60">
+                      <td className="py-2 px-3 text-[var(--text-primary)]">
+                        [Global Presets #{idx + 1}] global_presets_nasa.json.gz
+                      </td>
+                      <td className="py-2 px-3 text-[var(--text-secondary)]">
+                        {globalArchive.source}
+                      </td>
+                      <td className="py-2 px-3 text-[var(--text-primary)]">MODIS + VIIRS</td>
+                      <td className="py-2 px-3 text-[var(--text-secondary)]">NRT / STANDARD</td>
+                      <td className="py-2 px-3 text-right text-[var(--text-primary)] tabular-nums">
+                        {idx === 0 ? globalArchive.canonical_rows_total.toLocaleString() : '—'}
+                      </td>
+                      <td className="py-2 px-3 text-[var(--text-muted)]">{chk.slice(0, 24)}…</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
@@ -331,9 +520,9 @@ export const MethodologyView: React.FC = () => {
           },
           {
             id: 'M3_HARMONIZED',
-            status: 'Gated Research Extension',
+            status: 'Disabled on main (Opt-In Experimental)',
             title: 'Validated Cross-Sensor Operator',
-            desc: 'Physical FRP observation operator (Sofiev & Kouznetsov, 2026) requiring view-zenith, pixel-area, and cloud-mask inputs not fully present in point CSVs.',
+            desc: 'Empirical OLS bridge & platform ratio research extension (disabled by default on main; requires server ENABLE_EXPERIMENTAL_M3=true and include_harmonized=true). Physical Sofiev & Kouznetsov (2026) harmonization additionally requires view-zenith, pixel-area, and cloud-mask inputs absent from standard CSV rows.',
           },
         ].map((m) => (
           <div
@@ -490,14 +679,34 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
             <Database className="w-4 h-4 text-[var(--ember)]" />
             <span>Data Architecture: Live NASA FIRMS Active-Fire Streams &amp; Archive Baseline</span>
           </h2>
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--success)]/45 font-mono text-[11px] font-semibold text-[var(--success)]">
-              ● LIVE NASA FIRMS ({dataStatus?.live_firms_count ? `${dataStatus.live_firms_count.toLocaleString()} detections / 24h` : 'Active'})
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`px-2 py-0.5 rounded bg-[var(--surface-2)] border font-mono text-[11px] font-semibold ${
+                dataStatus?.live_firms_connected
+                  ? 'border-[var(--success)]/45 text-[var(--success)]'
+                  : dataStatus?.live_eonet_connected
+                  ? 'border-[var(--warning)]/45 text-[var(--warning)]'
+                  : 'border-[var(--border-subtle)] text-[var(--text-secondary)]'
+              }`}
+            >
+              {dataStatus?.live_firms_connected
+                ? `● LIVE NASA FIRMS (${
+                    dataStatus.live_firms_count
+                      ? `${dataStatus.live_firms_count.toLocaleString()} detections / 24h`
+                      : 'Active'
+                  })`
+                : dataStatus?.live_eonet_connected
+                ? `● LIVE NASA EONET (${dataStatus.live_eonet_event_count ?? 0} active events)`
+                : 'NASA ARCHIVE MODE (Live feeds offline)'}
             </span>
             <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--viirs)]/45 font-mono text-[11px] font-semibold text-[var(--viirs)]">
               {dataStatus?.parquet_archive?.available
-                ? `HISTORICAL ARCHIVE (2001–2026 · ${(dataStatus.parquet_archive.canonical_rows_total / 1_000_000).toFixed(2)}M NASA RECORDS)`
-                : 'ARCHIVE BASELINE (2024–2026-11-11)'}
+                ? `PARQUET ARCHIVE (${dataStatus.parquet_archive.date_range.min_date.slice(0, 4)}–${dataStatus.parquet_archive.date_range.max_date.slice(0, 4)} · ${(
+                    dataStatus.parquet_archive.canonical_rows_total / 1_000_000
+                  ).toFixed(2)}M NASA RECORDS)`
+                : dataStatus?.global_presets_archive?.available
+                ? `GLOBAL PRESETS ARCHIVE (${dataStatus.global_presets_archive.canonical_rows_total.toLocaleString()} NASA RECORDS)`
+                : 'NO LOCAL ARCHIVE LOADED'}
             </span>
           </div>
         </div>
@@ -542,15 +751,18 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
 
         <p>
           <strong className="text-[var(--text-primary)]">
-            2. Historical Satellite Archive &amp; Regional Baselines:
+            2. Historical Satellite Archive &amp; Seeded Global Coverage:
           </strong>{' '}
-          For verified regional archives spanning 2001–2026 (including Indonesia across MODIS C6.1
-          and VIIRS C2 Suomi-NPP, NOAA-20, and NOAA-21), multi-year calendars and period
-          comparisons query pre-aggregated official NASA FIRMS records with exact deduplication,
-          Standard-superseding-NRT lifecycle rules, and strict date-boundary separation so archive
-          totals are never double-counted with live 24-hour streams. For regions outside the
-          verified archive coverage, FireScope clearly labels its reference fallback baselines and
-          never disguises synthetic or fallback fixtures as live NASA satellite observations.
+          For Indonesia regions covered by DuckDB Parquet (
+          {dataStatus?.parquet_archive?.date_range.min_date ?? '2000-11-01'} to{' '}
+          {dataStatus?.parquet_archive?.date_range.max_date ?? '2026-11-12'}) and Seeded Global
+          Presets (California Sierra, Pará Amazon, Congo-Zambezi, Kakadu Savanna), multi-year
+          calendars and period comparisons query deduplicated official NASA FIRMS records with
+          Standard-superseding-NRT lifecycle rules and strict UTC date-boundary separation so
+          archive totals are never double-counted with live 24-hour streams. Custom AOIs outside
+          seeded archive windows use the live 24h FIRMS stream or optional user-supplied FIRMS Area
+          API key, and uncovered periods report explicit <code className="font-mono text-[11px]">NO_SOURCE_DATA</code>{' '}
+          states rather than synthetic fallback baselines or false zeros.
         </p>
       </div>
 

@@ -28,7 +28,10 @@ import {
   isPlatformAvailableInWindow,
   isPointInAoi,
 } from './fireScience';
-import { computeHarmonizedSeries } from './harmonizationScience';
+import {
+  computeBucketSpatialConcordance,
+  computeHarmonizedSeries,
+} from './harmonizationScience';
 
 /**
  * Unified daily bucket interface shared by DuckDB Parquet aggregates and live/fixture records.
@@ -158,6 +161,40 @@ function summarizeBucketFrp(buckets: DailyAggregateBucket[], sensor: SensorId): 
   };
 }
 
+function assessBinWindowCoverage(
+  binStartDateStr: string,
+  binEndDateStr: string,
+  coveredDateWindows: Array<{ startDate: string; endDate: string }>
+): {
+  status: 'FULL' | 'PARTIAL' | 'NONE';
+  coveredDays: number;
+  totalDays: number;
+  firstCoveredDate: string;
+  lastCoveredDate: string;
+} {
+  let curMs = Date.parse(`${binStartDateStr}T00:00:00Z`);
+  const endMs = Date.parse(`${binEndDateStr}T00:00:00Z`);
+  let totalDays = 0;
+  let coveredDays = 0;
+  let firstCoveredDate = '';
+  let lastCoveredDate = '';
+
+  while (curMs <= endMs) {
+    const dStr = new Date(curMs).toISOString().slice(0, 10);
+    totalDays += 1;
+    if (coveredDateWindows.some((w) => dStr >= w.startDate && dStr <= w.endDate)) {
+      coveredDays += 1;
+      if (!firstCoveredDate) firstCoveredDate = dStr;
+      lastCoveredDate = dStr;
+    }
+    curMs += 86400000;
+  }
+
+  const status =
+    coveredDays === 0 ? 'NONE' : coveredDays < totalDays ? 'PARTIAL' : 'FULL';
+  return { status, coveredDays, totalDays, firstCoveredDate, lastCoveredDate };
+}
+
 /**
  * Aggregates pre-filtered DailyAggregateBuckets (from DuckDB Parquet + Live FIRMS)
  * into a complete CalendarAnalyticsResponse including multi-year seasonal baselines (FR-09).
@@ -184,6 +221,7 @@ export function aggregateCalendarFromBuckets(params: {
   platformRegistry: PlatformRegistryEntry[];
   archiveCoverageStart: string;
   archiveCoverageEnd: string;
+  coveredDateWindows?: Array<{ startDate: string; endDate: string }>;
   dataMode: CalendarAnalyticsResponse['data_mode'];
   demoNotice: string;
   sources: string[];
@@ -192,6 +230,7 @@ export function aggregateCalendarFromBuckets(params: {
   archiveChecksums: string[];
   supersededNrtTotal?: number;
   duplicatesRemovedTotal?: number;
+  enableExperimentalM3?: boolean;
 }): CalendarAnalyticsResponse {
   const {
     buckets,
@@ -208,6 +247,7 @@ export function aggregateCalendarFromBuckets(params: {
     platformRegistry,
     archiveCoverageStart,
     archiveCoverageEnd,
+    coveredDateWindows,
     dataMode,
     demoNotice,
     sources,
@@ -216,6 +256,7 @@ export function aggregateCalendarFromBuckets(params: {
     archiveChecksums,
     supersededNrtTotal = 0,
     duplicatesRemovedTotal = 0,
+    enableExperimentalM3 = false,
   } = params;
 
   const bins = generateTimeBins(startDate, endDate, granularity);
@@ -229,25 +270,38 @@ export function aggregateCalendarFromBuckets(params: {
   const series: CalendarBinRecord[] = bins.map((bin) => {
     const binStartDateStr = bin.startUtc.slice(0, 10);
     const binEndDateStr = new Date(bin.endMs - 1000).toISOString().slice(0, 10);
+    const windowCoverage = coveredDateWindows
+      ? assessBinWindowCoverage(binStartDateStr, binEndDateStr, coveredDateWindows)
+      : null;
 
     const activePlatforms: PlatformId[] = [];
     const unavailablePlatforms: PlatformId[] = [];
 
     for (const p of selectedRegistry) {
-      if (
-        binStartDateStr >= archiveCoverageStart &&
-        binStartDateStr <= archiveCoverageEnd &&
-        isPlatformAvailableInWindow(p, binStartDateStr, binEndDateStr)
-      ) {
+      const checkStart =
+        windowCoverage && windowCoverage.status !== 'NONE'
+          ? windowCoverage.firstCoveredDate
+          : binStartDateStr;
+      const checkEnd =
+        windowCoverage && windowCoverage.status !== 'NONE'
+          ? windowCoverage.lastCoveredDate
+          : binEndDateStr;
+      const inRange = windowCoverage
+        ? windowCoverage.status !== 'NONE'
+        : binStartDateStr >= archiveCoverageStart && binStartDateStr <= archiveCoverageEnd;
+      if (inRange && isPlatformAvailableInWindow(p, checkStart, checkEnd)) {
         activePlatforms.push(p.platform_id);
       } else {
         unavailablePlatforms.push(p.platform_id);
       }
     }
 
-    const binBuckets = buckets.filter(
-      (b) => b.acq_date >= binStartDateStr && b.acq_date <= binEndDateStr
-    );
+    const binBuckets =
+      windowCoverage?.status === 'NONE'
+        ? []
+        : buckets.filter(
+            (b) => b.acq_date >= binStartDateStr && b.acq_date <= binEndDateStr
+          );
 
     const modisRequested =
       (sensor === 'ALL' || sensor === 'MODIS') &&
@@ -312,12 +366,25 @@ export function aggregateCalendarFromBuckets(params: {
     let coverageState: BinCoverageState = 'OBSERVED_ACTIVE';
     let coverageNote = 'MODIS C6.1 and VIIRS C2 records available for this window.';
 
-    if (binStartDateStr < archiveCoverageStart || binStartDateStr > archiveCoverageEnd) {
+    if (windowCoverage?.status === 'NONE') {
+      coverageState = 'NO_SOURCE_DATA';
+      coverageNote = `No NASA archive or live feed covers ${binStartDateStr} to ${binEndDateStr} for this AOI (NO_SOURCE_DATA).`;
+    } else if (
+      !windowCoverage &&
+      (binStartDateStr < archiveCoverageStart || binStartDateStr > archiveCoverageEnd)
+    ) {
       coverageState = 'NO_SOURCE_DATA';
       coverageNote = `Selected period is outside loaded archive coverage (${archiveCoverageStart} to ${archiveCoverageEnd}).`;
     } else if (activePlatforms.length === 0) {
       coverageState = 'NO_SOURCE_DATA';
       coverageNote = `No active platform data available for ${unavailablePlatforms.join(', ')} in this window.`;
+    } else if (windowCoverage?.status === 'PARTIAL') {
+      coverageState = 'PARTIAL_COVERAGE';
+      coverageNote = `Partial window coverage: only ${windowCoverage.coveredDays}/${windowCoverage.totalDays} days (${windowCoverage.firstCoveredDate} to ${windowCoverage.lastCoveredDate}) are within loaded NASA source windows.${
+        unavailablePlatforms.length > 0
+          ? ` Unavailable platforms: ${unavailablePlatforms.join(', ')}.`
+          : ''
+      }`;
     } else if (unavailablePlatforms.length > 0) {
       const totalDet = (modisCount ?? 0) + (viirsCount ?? 0);
       coverageState = totalDet > 0 ? 'PARTIAL_COVERAGE' : 'NO_DETECTIONS_IN_AVAILABLE_RECORDS';
@@ -345,7 +412,8 @@ export function aggregateCalendarFromBuckets(params: {
     const monthNaturalEndStr = `${binYear}-${binMonth}-${String(binDaysInMonth).padStart(2, '0')}`;
     const isPartialMonthBin =
       granularity === 'month' &&
-      (binStartDateStr > monthNaturalStartStr ||
+      (windowCoverage?.status === 'PARTIAL' ||
+        binStartDateStr > monthNaturalStartStr ||
         binEndDateStr < monthNaturalEndStr ||
         (archiveCoverageEnd.slice(0, 7) === `${binYear}-${binMonth}` &&
           archiveCoverageEnd < monthNaturalEndStr));
@@ -457,6 +525,11 @@ export function aggregateCalendarFromBuckets(params: {
         MODIS: modisBaseline,
         VIIRS: viirsBaseline,
       },
+      co_location: binBuckets.some(
+        (b) => typeof b.lat_bin === 'number' && typeof b.lng_bin === 'number'
+      )
+        ? computeBucketSpatialConcordance(binBuckets, 50) ?? undefined
+        : undefined,
     };
   });
 
@@ -584,7 +657,9 @@ export function aggregateCalendarFromBuckets(params: {
       ),
     },
     series,
-    harmonization: computeHarmonizedSeries(series, metric),
+    ...(enableExperimentalM3
+      ? { harmonization: computeHarmonizedSeries(series, metric) }
+      : {}),
     provenance: {
       sources,
       collections: [
@@ -912,8 +987,9 @@ export function aggregateObservationsToGrid(params: {
   cellSizeDeg: number;
   bounds?: BoundingBox;
   aoi?: AoiDefinition;
+  sourceBacking?: MapGridCell['source_backing'];
 }): MapGridCell[] {
-  const { observations, cellSizeDeg, bounds, aoi } = params;
+  const { observations, cellSizeDeg, bounds, aoi, sourceBacking = 'LIVE' } = params;
   const inv = 1 / cellSizeDeg;
   const cells = new Map<
     string,
@@ -979,7 +1055,7 @@ export function aggregateObservationsToGrid(params: {
       modis_frp_sum_mw: Number(c.modisFrp.toFixed(2)),
       viirs_frp_sum_mw: Number(c.viirsFrp.toFixed(2)),
       platforms: Array.from(c.platforms),
-      source_backing: 'LIVE' as const,
+      source_backing: sourceBacking,
     }))
     .sort((a, b) => b.pooled_observation_count - a.pooled_observation_count);
 }
