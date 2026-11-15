@@ -80,6 +80,10 @@ export interface FirmsFeedSyncStat {
 export interface LiveFirmsSnapshot {
   observations: CanonicalObservation[];
   feedStats: FirmsFeedSyncStat[];
+  rawCsvRows?: number;
+  parsedValidRows?: number;
+  exactDuplicatesRemoved?: number;
+  supersededNrtCount?: number;
   syncedAtUtc: string;
   latestAcquisitionUtc: string;
   minDate: string;
@@ -481,6 +485,8 @@ export async function fetchLiveFirmsGlobalStreams(
           throw new Error(`HTTP ${res.status} for ${feed.id}`);
         }
         const csvText = await res.text();
+        const trimmed = csvText.trim();
+        const rawLineCount = trimmed ? Math.max(0, trimmed.split(/\r?\n/).length - 1) : 0;
         const sha256 = hashFn
           ? hashFn(csvText)
           : `firms-${feed.id}-${csvText.length}-${syncedAtUtc.slice(0, 10)}`;
@@ -492,17 +498,19 @@ export async function fetchLiveFirmsGlobalStreams(
           retrievedAtUtc: syncedAtUtc,
           checksum: sha256,
         });
-        return { feed, parsed, sha256 };
+        return { feed, parsed, sha256, rawLineCount };
       } finally {
         clearTimeout(timer);
       }
     })
   );
 
+  let rawCsvRows = 0;
   for (const outcome of responses) {
     if (outcome.status === 'fulfilled') {
       anySuccess = true;
-      const { feed, parsed, sha256 } = outcome.value;
+      const { feed, parsed, sha256, rawLineCount } = outcome.value;
+      rawCsvRows += rawLineCount;
       feedStats.push({
         id: feed.id,
         product: feed.sourceProduct,
@@ -533,9 +541,16 @@ export async function fetchLiveFirmsGlobalStreams(
   if (minDate === '9999-12-31') minDate = syncedAtUtc.slice(0, 10);
   if (maxDate === '0000-01-01') maxDate = syncedAtUtc.slice(0, 10);
 
+  const parsedValidRows = allObservations.length;
+  const deduped = deduplicateAndSupersedeObservations(allObservations);
+
   return {
-    observations: allObservations,
+    observations: deduped.canonical,
     feedStats,
+    rawCsvRows,
+    parsedValidRows,
+    exactDuplicatesRemoved: deduped.exactDuplicatesRemoved,
+    supersededNrtCount: deduped.supersededNrtCount,
     syncedAtUtc,
     latestAcquisitionUtc,
     minDate,

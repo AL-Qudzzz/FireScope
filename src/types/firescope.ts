@@ -11,6 +11,12 @@ export type Granularity = 'day' | 'week' | 'month';
 
 export type MethodLevelId = 'M0_RAW' | 'M1_AGGREGATED' | 'M2_COMPARATIVE';
 
+export type GatedMethodLevelId =
+  | 'M3_HARMONIZED'
+  | 'M3_CALIBRATED'
+  | 'M3_EMPIRICAL_PLATFORM_BRIDGE'
+  | 'M4_BIAS_AWARE';
+
 export type BinCoverageState =
   | 'OBSERVED_ACTIVE'
   | 'NO_DETECTIONS_IN_AVAILABLE_RECORDS'
@@ -145,6 +151,201 @@ export interface SeasonalBaselineComparison {
   caveat_note: string;
 }
 
+export type CrossSensorRegime =
+  | 'DUAL_SENSOR_PEAK'
+  | 'DUAL_SENSOR_ACTIVE'
+  | 'VIIRS_375M_DOMINATED'
+  | 'MODIS_1KM_ONLY'
+  | 'QUIET_VERIFIED'
+  | 'COVERAGE_GAP';
+
+export type M2MethodId =
+  | 'M2_POINT_PROXIMITY_6H'
+  | 'M2_GRID_DAILY_025_DEG'
+  | 'M2_UNAVAILABLE';
+
+export interface BinSpatialConcordance {
+  method_id?: M2MethodId;
+  m2_method_id?: M2MethodId;
+  method_name?: string;
+  spatial_resolution?: string;
+  temporal_resolution?: string;
+  spatial_threshold_km?: number | null;
+  temporal_threshold_hours?: number | null;
+  aggregation_method?: string;
+  grid_resolution_deg: number;
+  active_cells_total: number;
+  total_active_cells: number;
+  co_located_cells_count: number;
+  co_located_cells: number;
+  modis_only_cells_count: number;
+  modis_only_cells: number;
+  viirs_only_cells_count: number;
+  viirs_only_cells: number;
+  modis_eligible_cells_count?: number;
+  modis_eligible_count?: number;
+  viirs_eligible_cells_count?: number;
+  viirs_eligible_count?: number;
+  intersection_count?: number;
+  union_count?: number;
+  spatial_co_located_cells_pct: number | null;
+  spatial_concordance_pct?: number | null;
+  cell_concordance_pct: number | null;
+  jaccard_index?: number | null;
+  modis_cell_co_detection_pct?: number | null;
+  modis_cell_co_detected_pct: number | null;
+  modis_co_detected_by_viirs_pct?: number | null;
+  modis_conditional_rate?: number | null;
+  viirs_cell_co_detection_pct?: number | null;
+  viirs_cell_co_detected_pct: number | null;
+  viirs_co_detected_by_modis_pct?: number | null;
+  viirs_conditional_rate?: number | null;
+  coverage_state?: BinCoverageState;
+  source_backing?: DataSourceBacking | string;
+  note?: string;
+}
+
+export interface ViirsPlatformNormalizationSummary {
+  method_id: 'M2_COMPARATIVE';
+  normalization_formula: string;
+  formula?: string;
+  total_viirs_detections: number;
+  raw_viirs_total: number;
+  raw_viirs_detections?: number;
+  available_viirs_platforms: Array<'SNPP' | 'NOAA20' | 'NOAA21'>;
+  active_viirs_platforms: Array<'SNPP' | 'NOAA20' | 'NOAA21'>;
+  per_platform_counts: {
+    SNPP: number;
+    NOAA20: number;
+    NOAA21: number;
+  };
+  per_platform_covered_bins: {
+    SNPP: number;
+    NOAA20: number;
+    NOAA21: number;
+  };
+  per_platform_covered_days?: {
+    SNPP: number;
+    NOAA20: number;
+    NOAA21: number;
+  };
+  covered_bins_total: number;
+  requested_bins_total: number;
+  window_days?: number;
+  eligible_days?: number;
+  viirs_platform_days?: number;
+  effective_k_viirs: number | null;
+  effective_active_platforms: number;
+  effective_viirs_platforms?: number | null;
+  expected_viirs_platforms?: number;
+  viirs_effective_platform_count?: number | null;
+  viirs_per_active_platform: number | null;
+  viirs_per_effective_platform?: number | null;
+  normalized_viirs_per_platform?: number | null;
+  viirs_per_platform_bin: number | null;
+  coverage_completeness_pct: number | null;
+  platform_status_note?: string;
+  scientific_caveat: string;
+}
+
+export interface SourceContributionProvenance {
+  source_id: string;
+  source_label?: string;
+  label?: string;
+  backing?: DataSourceBacking;
+  source_type?:
+    | 'PARQUET_ARCHIVE'
+    | 'NASA_AREA_API'
+    | 'NASA_LIVE_24H_FEED'
+    | 'DEMO_FIXTURE'
+    | 'EONET_EVENTS';
+  sensors?: SensorId[];
+  platforms?: PlatformId[];
+  first_available_date?: string | null;
+  last_available_date?: string | null;
+  temporal_coverage?: {
+    start_date: string | null;
+    end_date: string | null;
+  };
+  requested_period?: {
+    start_date: string;
+    end_date: string;
+  };
+  returned_period?: {
+    start_date: string | null;
+    end_date: string | null;
+  };
+  spatial_scope?: string;
+  spatial_coverage_note?: string;
+  record_count: number;
+  retrieved_at_utc?: string;
+  coverage_completeness:
+    | 'COMPLETE'
+    | 'PARTIAL_REGIONAL'
+    | 'PARTIAL_TEMPORAL'
+    | 'LIVE_ONLY'
+    | 'UNAVAILABLE';
+  note?: string;
+  missing_intervals?: Array<{
+    start_date: string;
+    end_date: string;
+    reason: string;
+  }>;
+}
+
+export interface CrossSensorHarmonizationSummary {
+  method_id: 'M2_COMPARATIVE' | M2MethodId;
+  m2_spatial_method_id?: M2MethodId;
+  m2_spatial_method_name?: string;
+  method_version: string;
+  formula: string;
+  spatial_unit: string;
+  time_window: string;
+  spatial_resolution?: string;
+  temporal_resolution?: string;
+  spatial_threshold_km?: number | null;
+  temporal_threshold_hours?: number | null;
+  aggregation_method?: string;
+  source_backing?: DataSourceBacking | string;
+  active_bins_total: number;
+  co_detected_bins_count: number;
+  viirs_only_bins_count: number;
+  modis_only_bins_count: number;
+  quiet_verified_bins_count: number;
+  temporal_concordance_pct: number | null;
+  temporal_concordance: {
+    total_active_bins: number;
+    co_active_bins: number;
+    co_detected_bins: number;
+    modis_only_bins: number;
+    viirs_only_bins: number;
+    temporal_jaccard_pct: number | null;
+    log_pearson_r: number | null;
+  };
+  spatial_co_located_cells_pct: number | null;
+  spatial_concordance: BinSpatialConcordance;
+  active_cells_total?: number;
+  co_located_cells_count?: number;
+  modis_only_cells_count?: number;
+  viirs_only_cells_count?: number;
+  modis_eligible_cells_count?: number;
+  viirs_eligible_cells_count?: number;
+  intersection_count?: number;
+  union_count?: number;
+  jaccard_index?: number | null;
+  modis_cell_co_detection_pct?: number | null;
+  modis_co_detected_by_viirs_pct?: number | null;
+  modis_conditional_rate?: number | null;
+  viirs_cell_co_detection_pct?: number | null;
+  viirs_co_detected_by_modis_pct?: number | null;
+  viirs_conditional_rate?: number | null;
+  coverage_completeness_pct?: number | null;
+  viirs_to_modis_ratio: number | null;
+  empirical_viirs_to_modis_ratio: number | null;
+  dominant_regime_note: string;
+  scientific_caveat: string;
+}
+
 export interface CalendarBinRecord {
   bin_key: string;
   label: string;
@@ -152,6 +353,16 @@ export interface CalendarBinRecord {
   time_bin_end_utc: string;
   granularity: Granularity;
   coverage_state: BinCoverageState;
+  source_backing?: DataSourceBacking;
+  cross_sensor_regime?: CrossSensorRegime;
+  spatial_concordance?: BinSpatialConcordance;
+  k_viirs_active?: number;
+  viirs_platform_days?: number;
+  eligible_days?: number;
+  viirs_effective_platform_count?: number | null;
+  viirs_per_platform?: number | null;
+  viirs_per_effective_platform?: number | null;
+  m3_status?: 'M3_DISABLED';
   values: {
     MODIS: number | null;
     VIIRS: number | null;
@@ -186,11 +397,26 @@ export type DataMode =
   | 'LIVE_NASA_FIRMS'
   | 'LIVE_NASA_EONET_HYBRID'
   | 'NASA_ARCHIVE_BASELINE'
+  | 'PARTIAL_COVERAGE'
+  | 'NO_SOURCE_DATA'
+  | 'SERVER_UNAVAILABLE'
+  | 'DEMO_FIXTURE_BASELINE'
   | 'DEMO_SNAPSHOT';
 
 export interface CalendarAnalyticsResponse {
   data_mode: DataMode;
+  data_backing?: DataSourceBacking;
   demo_notice: string;
+  requested_window?: {
+    start_date: string;
+    end_date: string;
+  };
+  actual_coverage_window?: {
+    start_date: string | null;
+    end_date: string | null;
+  };
+  incomplete_coverage?: boolean;
+  coverage_warning?: string | null;
   aoi: {
     id: string;
     name: string;
@@ -225,6 +451,10 @@ export interface CalendarAnalyticsResponse {
     superseded_nrt_total: number;
     duplicates_removed_total: number;
   };
+  cross_sensor_harmonization?: CrossSensorHarmonizationSummary;
+  viirs_platform_normalization?: ViirsPlatformNormalizationSummary;
+  source_provenance?: SourceContributionProvenance[];
+  m3_production_status?: 'M3_DISABLED';
   thresholds: {
     MODIS: [number, number, number, number];
     VIIRS: [number, number, number, number];
@@ -247,6 +477,7 @@ export interface PaginatedObservationsResponse {
   limit: number;
   next_cursor: string | null;
   co_location?: CoLocationSummary;
+  grid_concordance?: CoLocationSummary;
   method: {
     id: 'M0_RAW';
     version: string;
@@ -256,6 +487,19 @@ export interface PaginatedObservationsResponse {
     sources: string[];
     retrieved_at_utc: string;
   };
+}
+
+export interface LivePipelineReconciliation {
+  raw_csv_rows: number;
+  parsed_valid_rows: number;
+  exact_duplicates_removed: number;
+  superseded_nrt_count: number;
+  canonical_observations: number;
+  in_global_world_bbox_count: number;
+  excluded_offshore_count: number;
+  onshore_map_eligible_count: number;
+  default_map_sample_limit: number;
+  reconciliation_note: string;
 }
 
 export interface MapHotspotsResponse {
@@ -273,6 +517,7 @@ export interface MapHotspotsResponse {
   latest_acquisition_utc: string;
   min_date: string;
   max_date: string;
+  live_reconciliation?: LivePipelineReconciliation;
   items: CanonicalObservation[];
 }
 
@@ -363,6 +608,28 @@ export interface GlobalPresetsArchiveStatus {
   checksums: string[];
 }
 
+export interface IndonesiaGapBackfillStatus {
+  available: boolean;
+  gap_date: string;
+  target_date: string;
+  coverage_date: string;
+  source: string;
+  retrieved_at_utc?: string;
+  canonical_count: number;
+  canonical_observations: number;
+  canonical_rows_total: number;
+  bucket_count: number;
+  daily_buckets_count: number;
+  bucket_rows_total: number;
+  modis_count: number;
+  modis_detections: number;
+  viirs_count: number;
+  viirs_detections: number;
+  checksums: string[];
+  sha256_checksums: string[];
+  feed_stats?: unknown[];
+}
+
 export interface DataStatusResponse {
   status: 'OK' | 'PARTIAL_PLATFORM_GAP';
   data_mode: DataMode;
@@ -375,11 +642,13 @@ export interface DataStatusResponse {
   live_firms_min_date?: string;
   live_firms_max_date?: string;
   live_firms_feeds?: FirmsFeedStatusEntry[];
+  live_reconciliation?: LivePipelineReconciliation;
   firms_map_key_configured?: boolean;
   live_eonet_connected?: boolean;
   live_eonet_event_count?: number;
   live_eonet_synced_at_utc?: string;
   parquet_archive?: ParquetArchiveManifest | null;
+  indonesia_gap_backfill?: IndonesiaGapBackfillStatus | null;
   global_presets_archive?: GlobalPresetsArchiveStatus | null;
   firms_area_api_constraints: {
     day_range_min: number;
@@ -433,8 +702,13 @@ export interface PeriodBinValue {
   viirs_detections: number | null;
   modis_expected_satellites?: number;
   viirs_expected_satellites?: number;
+  modis_effective_satellites?: number;
+  viirs_effective_satellites?: number;
+  viirs_platform_days?: number;
+  eligible_days?: number;
   modis_per_satellite?: number | null;
   viirs_per_satellite?: number | null;
+  viirs_per_effective_satellite?: number | null;
   modis_frp_sum_mw: number | null;
   modis_frp_mean_mw: number | null;
   viirs_frp_sum_mw: number | null;
@@ -463,8 +737,13 @@ export interface YoyYearSummary {
   viirs_detections: number;
   modis_expected_satellites?: number;
   viirs_expected_satellites?: number;
+  modis_effective_satellites?: number;
+  viirs_effective_satellites?: number;
+  viirs_platform_days?: number;
+  eligible_days?: number;
   modis_per_satellite?: number;
   viirs_per_satellite?: number;
+  viirs_per_effective_satellite?: number;
   modis_frp_sum_mw: number | null;
   modis_frp_mean_mw: number | null;
   viirs_frp_sum_mw: number | null;
@@ -499,14 +778,24 @@ export interface PeriodComparisonResponse {
     viirs_pct_change: number | null;
     period_a_modis_satellites?: number;
     period_b_modis_satellites?: number;
+    period_a_modis_effective_satellites?: number;
+    period_b_modis_effective_satellites?: number;
     period_a_modis_per_satellite?: number | null;
     period_b_modis_per_satellite?: number | null;
     modis_per_satellite_delta?: number | null;
     modis_per_satellite_pct_change?: number | null;
     period_a_viirs_satellites?: number;
     period_b_viirs_satellites?: number;
+    period_a_viirs_effective_satellites?: number;
+    period_b_viirs_effective_satellites?: number;
+    period_a_viirs_platform_days?: number;
+    period_b_viirs_platform_days?: number;
+    period_a_eligible_days?: number;
+    period_b_eligible_days?: number;
     period_a_viirs_per_satellite?: number | null;
     period_b_viirs_per_satellite?: number | null;
+    period_a_viirs_per_effective_satellite?: number | null;
+    period_b_viirs_per_effective_satellite?: number | null;
     viirs_per_satellite_delta?: number | null;
     viirs_per_satellite_pct_change?: number | null;
     period_a_modis_frp_mean_mw: number | null;
@@ -572,6 +861,14 @@ export interface AoiComparisonResponse {
     aoi_a_viirs: number | null;
     aoi_b_modis: number | null;
     aoi_b_viirs: number | null;
+    aoi_a_modis_density_per_1000_km2?: number | null;
+    aoi_a_viirs_density_per_1000_km2?: number | null;
+    aoi_b_modis_density_per_1000_km2?: number | null;
+    aoi_b_viirs_density_per_1000_km2?: number | null;
+    aoi_a_modis_frp_sum_mw?: number | null;
+    aoi_a_viirs_frp_sum_mw?: number | null;
+    aoi_b_modis_frp_sum_mw?: number | null;
+    aoi_b_viirs_frp_sum_mw?: number | null;
   }>;
   comparability_warnings: string[];
   method: {
@@ -688,6 +985,27 @@ export interface CoLocationCluster {
 }
 
 export interface CoLocationSummary {
+  method_id?: M2MethodId;
+  method_name?: string;
+  spatial_resolution?: string;
+  temporal_resolution?: string;
+  spatial_threshold_km?: number | null;
+  temporal_threshold_hours?: number | null;
+  aggregation_method?: string;
+  eligible_observation_count?: number;
+  modis_eligible_count?: number;
+  viirs_eligible_count?: number;
+  intersection_count?: number;
+  union_count?: number;
+  jaccard_index?: number | null;
+  modis_conditional_rate?: number | null;
+  viirs_conditional_rate?: number | null;
+  spatial_concordance_pct?: number | null;
+  modis_co_detection_pct?: number | null;
+  viirs_co_detection_pct?: number | null;
+  coverage_state?: BinCoverageState;
+  source_backing?: DataSourceBacking | string;
+  note?: string;
   evaluation_scope?: 'FULL_BIN_POINTS' | 'FULL_BIN_GRID_BUCKETS';
   spatial_radius_km_rule: string;
   temporal_window_hours: number;
@@ -705,5 +1023,6 @@ export interface CoLocationSummary {
   co_detected_viirs_frp_mw: number;
   clusters: CoLocationCluster[];
 }
+
 
 

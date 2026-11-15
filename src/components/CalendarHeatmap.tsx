@@ -612,12 +612,21 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
                   : 'No data'}
               </strong>
               {activeBin.values.VIIRS !== null &&
-                activeExpectedSats &&
-                activeExpectedSats.viirs > 0 && (
+                ((activeBin.viirs_effective_platform_count ?? activeExpectedSats?.viirs ?? 0) > 0) && (
                   <span className="text-[var(--text-muted)]">
                     {' '}
-                    ({(activeBin.values.VIIRS / activeExpectedSats.viirs).toFixed(1)}/sat ·{' '}
-                    {activeExpectedSats.viirs} sat)
+                    (
+                    {(
+                      activeBin.viirs_per_effective_platform ??
+                      Number(
+                        (
+                          activeBin.values.VIIRS /
+                          (activeBin.viirs_effective_platform_count ?? activeExpectedSats?.viirs ?? 1)
+                        ).toFixed(2)
+                      )
+                    ).toLocaleString()}
+                    /sat · k_eff=
+                    {activeBin.viirs_effective_platform_count ?? activeExpectedSats?.viirs ?? 0} sat)
                   </span>
                 )}
             </span>

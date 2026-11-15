@@ -2514,3 +2514,334 @@ test('Regression #40 (Gap #4): CalendarHeatmap inspector per-satellite rates and
     'Equal per-satellite rates should yield aligned M3 MODIS-eq estimates across 1-sat vs 3-sat eras'
   );
 });
+
+test('Regression #41 (Gate A.1 & A.2): M2_POINT_PROXIMITY_6H vs M2_GRID_DAILY_025_DEG explicit method metadata, Union-Find chaining, and threshold sensitivity', () => {
+  // Construct 3 points within the same 0.25deg cell (-2.20..-2.05, 114.05..114.20) on 2026-10-15:
+  // Point 1: MODIS at (-2.200, 114.100) 03:30 UTC
+  // Point 2: VIIRS at (-2.205, 114.105) 05:10 UTC (~0.78 km from Point 1, Δt = 1.67h -> co-located in both Point & Grid)
+  // Point 3: VIIRS at (-2.120, 114.180) 18:30 UTC (~12.6 km from Point 1, Δt = 15h -> separate in Point M2, but SAME 0.25deg cell (-2.25, 114.0) in Grid M2!)
+  const p1Modis = parseModisRecord(
+    {
+      latitude: -2.2,
+      longitude: 114.1,
+      brightness: 330,
+      scan: 1.0,
+      track: 1.0,
+      acq_date: '2026-10-15',
+      acq_time: '0330',
+      satellite: 'T',
+      confidence: 85,
+      version: '6.1',
+      bright_t31: 295,
+      frp: 40,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'm2-sep', rowNumber: 1 }
+  );
+  const p2ViirsNear = parseViirsRecord(
+    {
+      latitude: -2.205,
+      longitude: 114.105,
+      bright_ti4: 340,
+      scan: 0.4,
+      track: 0.4,
+      acq_date: '2026-10-15',
+      acq_time: '0510',
+      satellite: 'N20',
+      confidence: 'h',
+      version: '2.0NRT',
+      bright_ti5: 293,
+      frp: 12,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'm2-sep', rowNumber: 2 }
+  );
+  const p3ViirsSameCellFar = parseViirsRecord(
+    {
+      latitude: -2.12,
+      longitude: 114.18,
+      bright_ti4: 335,
+      scan: 0.4,
+      track: 0.4,
+      acq_date: '2026-10-15',
+      acq_time: '1830',
+      satellite: 'N21',
+      confidence: 'n',
+      version: '2.0NRT',
+      bright_ti5: 291,
+      frp: 8,
+      daynight: 'N',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'm2-sep', rowNumber: 3 }
+  );
+
+  const pointM2 = clusterCrossSensorObservations([p1Modis, p2ViirsNear, p3ViirsSameCellFar], 6);
+  const gridM2 = computeBucketSpatialConcordance(
+    observationsToDailyBuckets([p1Modis, p2ViirsNear, p3ViirsSameCellFar])
+  );
+
+  assert.equal(pointM2.method_id, 'M2_POINT_PROXIMITY_6H');
+  assert.equal(pointM2.evaluation_scope, 'FULL_BIN_POINTS');
+  assert.equal(pointM2.co_detected_clusters, 1);
+  assert.equal(pointM2.viirs_only_clusters, 1);
+  assert.equal(pointM2.total_clusters, 2);
+  assert.equal(pointM2.jaccard_index, 50);
+  assert.equal(pointM2.modis_conditional_rate, 100);
+  assert.equal(pointM2.viirs_conditional_rate, 50);
+
+  assert.ok(gridM2);
+  assert.equal(gridM2.method_id, 'M2_GRID_DAILY_025_DEG');
+  assert.equal(gridM2.evaluation_scope, 'FULL_BIN_GRID_BUCKETS');
+  assert.equal(gridM2.co_detected_clusters, 1);
+  assert.equal(gridM2.viirs_only_clusters, 0);
+  assert.equal(gridM2.total_clusters, 1);
+  assert.equal(gridM2.jaccard_index, 100);
+  assert.notEqual(
+    pointM2.jaccard_index,
+    gridM2.jaccard_index,
+    'Point M2 (50% Jaccard) and 0.25deg Grid M2 (100% Jaccard) must remain distinct'
+  );
+
+  // Threshold sensitivity check: tightening temporal window to ±1h separates p1Modis (03:30) and p2ViirsNear (05:10)
+  const tightTemporal = clusterCrossSensorObservations([p1Modis, p2ViirsNear], 1);
+  assert.equal(tightTemporal.co_detected_clusters, 0);
+  assert.equal(tightTemporal.jaccard_index, 0);
+
+  // Tightening spatial radius override to 0.5 km separates p1Modis and p2ViirsNear (~0.78 km apart)
+  const tightSpatial = clusterCrossSensorObservations([p1Modis, p2ViirsNear], 6, 200, {
+    spatialRadiusKmOverride: 0.5,
+  });
+  assert.equal(tightSpatial.co_detected_clusters, 0);
+  assert.equal(tightSpatial.jaccard_index, 0);
+});
+
+test('Regression #42 (Gate A.3): Exposure-weighted VIIRS normalization eliminates -27.78% integer bias on 2026-11-01..2026-11-12', async () => {
+  const { computePlatformExposure } = await import('./harmonizationScience');
+  const { PLATFORM_REGISTRY } = await import('../data/firmsArchiveData');
+
+  const exp = computePlatformExposure(
+    '2026-11-01',
+    '2026-11-12',
+    ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    PLATFORM_REGISTRY
+  );
+
+  assert.equal(exp.windowDays, 12);
+  assert.equal(exp.viirsPlatformDays, 26); // SNPP (2) + NOAA20 (12) + NOAA21 (12)
+  assert.equal(exp.viirsEffectivePlatforms, 2.17);
+  assert.equal(exp.viirsMaxIntegerPlatforms, 3);
+  assert.equal(exp.modisPlatformDays, 24);
+  assert.equal(exp.modisEffectivePlatforms, 2);
+
+  // Verify exact Indonesia 2026-11-01..2026-11-12 VIIRS count (42,421) normalization:
+  // Exposure-weighted: 42421 / (26/12) = 19578.92 vs integer 42421 / 3 = 14140.33
+  const vCount = 42421;
+  const rEff = Number(((vCount * exp.windowDays) / exp.viirsPlatformDays).toFixed(2));
+  const rInt = Number((vCount / exp.viirsMaxIntegerPlatforms).toFixed(2));
+  assert.equal(rEff, 19578.92);
+  assert.equal(rInt, 14140.33);
+});
+
+test('Regression #43 (Gate A.2 & SV-05): aggregateCalendarFromBuckets populates cross_sensor_harmonization, viirs_platform_normalization, and per-bin M2 spatial_concordance', () => {
+  const mObs = parseModisRecord(
+    {
+      latitude: -2.2,
+      longitude: 114.0,
+      brightness: 328,
+      scan: 1.0,
+      track: 1.0,
+      acq_date: '2026-11-01',
+      acq_time: '0330',
+      satellite: 'Terra',
+      confidence: 82,
+      version: '6.1',
+      bright_t31: 294,
+      frp: 30,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'b-m', rowNumber: 1 }
+  );
+  const vObs = parseViirsRecord(
+    {
+      latitude: -2.21,
+      longitude: 114.01,
+      bright_ti4: 342,
+      scan: 0.4,
+      track: 0.4,
+      acq_date: '2026-11-01',
+      acq_time: '0610',
+      satellite: 'N20',
+      confidence: 'h',
+      version: '2.0',
+      bright_ti5: 292,
+      frp: 14,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'b-v', rowNumber: 2 }
+  );
+
+  const cal = aggregateCalendarFromBuckets({
+    buckets: observationsToDailyBuckets([mObs, vObs]),
+    aoi: SAMPLE_AOI,
+    startDate: '2026-11-01',
+    endDate: '2026-11-02',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    metric: 'detection_count',
+    platformRegistry: TEST_PLATFORM_REGISTRY,
+    archiveCoverageStart: '2026-11-01',
+    archiveCoverageEnd: '2026-11-12',
+    dataBacking: 'REAL_NASA_ARCHIVE_PARQUET',
+    dataMode: 'LIVE_NASA_FIRMS',
+    demoNotice: 'M2 calendar bucket test',
+    sources: ['NASA FIRMS Parquet'],
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+    latestAcquisitionUtc: '2026-11-01T06:10:00Z',
+    archiveChecksums: ['b-m', 'b-v'],
+  });
+
+  assert.ok(cal.cross_sensor_harmonization, 'cross_sensor_harmonization must be populated');
+  assert.equal(cal.cross_sensor_harmonization.temporal_concordance.co_detected_bins, 1);
+  assert.equal(cal.cross_sensor_harmonization.temporal_concordance.temporal_jaccard_pct, 100);
+  assert.equal(
+    cal.cross_sensor_harmonization.spatial_concordance.m2_method_id,
+    'M2_GRID_DAILY_025_DEG'
+  );
+  assert.equal(cal.cross_sensor_harmonization.spatial_concordance.co_located_cells, 1);
+  assert.equal(cal.cross_sensor_harmonization.spatial_concordance.cell_concordance_pct, 100);
+
+  assert.ok(cal.viirs_platform_normalization, 'viirs_platform_normalization must be populated');
+  assert.ok(cal.viirs_platform_normalization.viirs_per_effective_platform !== null);
+
+  const bin0 = cal.series[0];
+  assert.ok(bin0.spatial_concordance, 'Per-bin spatial_concordance must be populated');
+  assert.equal(bin0.spatial_concordance.co_located_cells, 1);
+  assert.equal(bin0.spatial_concordance.cell_concordance_pct, 100);
+  assert.ok(bin0.co_location, 'Per-bin co_location must be populated');
+  assert.equal(bin0.co_location.method_id, 'M2_GRID_DAILY_025_DEG');
+});
+
+test('Regression #44 (SV-24): Calendar CSV and Regional Comparison CSV export complete M2, exposure-weighted VIIRS, and density columns with NO_SOURCE_DATA null preservation', async () => {
+  const { generateProvenanceCsv, createEmptyCalendarAnalytics } = await import(
+    '../services/firescopeApi'
+  );
+
+  // 1. Test NO_SOURCE_DATA Calendar CSV null preservation
+  const emptyCal = createEmptyCalendarAnalytics({
+    aoiId: 'california-sierra',
+    customAoi: null,
+    startDate: '2020-01-01',
+    endDate: '2020-01-02',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    modisMinConfidence: 0,
+    viirsCategories: ['low', 'nominal', 'high'],
+    excludeOffshore: true,
+    calendarMetric: 'detection_count',
+    controlDensity: 'overview',
+    selectedBinKey: null,
+    selectedObservationId: null,
+  });
+  const emptyCsv = generateProvenanceCsv(emptyCal);
+  assert.ok(
+    emptyCsv.includes(
+      'viirs_platform_days,viirs_effective_platform_count,viirs_per_effective_platform'
+    )
+  );
+  assert.ok(
+    emptyCsv.includes(
+      'm2_method_id,m2_spatial_resolution,m2_temporal_resolution,modis_eligible_cells,viirs_eligible_cells,co_detected_cells,modis_only_cells,viirs_only_cells,intersection_count,union_count,jaccard_index,modis_conditional_rate,viirs_conditional_rate,source_backing'
+    )
+  );
+  const dataLines = emptyCsv.split('\n').filter((line) => !line.startsWith('#') && line.trim());
+  assert.equal(dataLines.length, 3); // header + 2 bins
+  assert.ok(dataLines[1].includes(',NO_SOURCE_DATA,'));
+  assert.ok(dataLines[1].includes('M2_UNAVAILABLE'));
+
+  // 2. Test Regional Comparison CSV density & area columns
+  const largeAoi: AoiDefinition = {
+    ...SAMPLE_AOI,
+    id: 'para-amazon',
+    name: 'Para Amazon',
+    areaSqKm: 142800,
+  };
+  const aoiComp = buildAoiComparisonResponse({
+    aoiA: SAMPLE_AOI,
+    analyticsA: emptyCal,
+    backingA: 'REAL_NASA_ARCHIVE_PARQUET',
+    aoiB: largeAoi,
+    analyticsB: emptyCal,
+    backingB: 'GLOBAL_PRESETS_ARCHIVE',
+    retrievedAtUtc: '2026-11-15T00:00:00Z',
+  });
+  const aoiCsv = generateAoiComparisonCsv(aoiComp);
+  assert.ok(
+    aoiCsv.includes(
+      'aoi_a_area_sq_km,aoi_b_area_sq_km,aoi_a_modis_detections,aoi_a_viirs_detections,aoi_a_modis_density_per_1000_km2,aoi_a_viirs_density_per_1000_km2'
+    )
+  );
+  assert.ok(
+    aoiCsv.includes(
+      'aoi_b_modis_density_per_1000_km2,aoi_b_viirs_density_per_1000_km2,aoi_a_modis_frp_sum_mw,aoi_a_viirs_frp_sum_mw,aoi_b_modis_frp_sum_mw,aoi_b_viirs_frp_sum_mw,source_backing_a,source_backing_b'
+    )
+  );
+});
+
+test('Regression #45 (Finding #8 & #10): Express API bridges Indonesia 2026-11-13 gap via verified NASA FIRMS backfill and exposes live_reconciliation', async () => {
+  const { createApiApp } = await import('../../server');
+  const app = createApiApp({ preloadLiveFeeds: false, offlineMode: true });
+  const srv = http.createServer(app);
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+  const { port } = srv.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. /api/v1/data/status exposes indonesia_gap_backfill
+    const statusRes = await fetch(`${baseUrl}/api/v1/data/status`);
+    assert.equal(statusRes.status, 200);
+    const statusJson = await statusRes.json();
+    assert.ok(statusJson.indonesia_gap_backfill?.available);
+    assert.equal(statusJson.indonesia_gap_backfill.target_date, '2026-11-13');
+    assert.equal(statusJson.indonesia_gap_backfill.canonical_observations, 1282);
+
+    // 2. /api/v1/analytics/calendar for indonesia-archipelago on 2026-11-12..2026-11-13 bridges 2026-11-13 (PARTIAL_COVERAGE due to S-NPP 2026-11-02 cutoff, never NO_SOURCE_DATA) with 50 MODIS and 1232 VIIRS
+    const calRes = await fetch(
+      `${baseUrl}/api/v1/analytics/calendar?aoi_id=indonesia-archipelago&start_date=2026-11-12&end_date=2026-11-13&granularity=day`
+    );
+    assert.equal(calRes.status, 200);
+    const calJson = await calRes.json();
+    const nov13 = calJson.series.find((b: CalendarBinRecord) => b.bin_key === '2026-11-13');
+    assert.ok(nov13, '2026-11-13 bin must exist');
+    assert.equal(nov13.coverage_state, 'PARTIAL_COVERAGE');
+    assert.equal(nov13.values.MODIS, 50);
+    assert.equal(nov13.values.VIIRS, 1232);
+    assert.ok(calJson.cross_sensor_harmonization, 'Calendar response must include cross_sensor_harmonization');
+    assert.ok(calJson.viirs_platform_normalization, 'Calendar response must include viirs_platform_normalization');
+
+    // 3. /api/v1/observations for indonesia-archipelago on 2026-11-13 returns 1,282 matching records + both co_location (M2_POINT_PROXIMITY_6H) and grid_concordance (M2_GRID_DAILY_025_DEG)
+    const obsRes = await fetch(
+      `${baseUrl}/api/v1/observations?aoi_id=indonesia-archipelago&start_date=2026-11-13&end_date=2026-11-13&limit=10`
+    );
+    assert.equal(obsRes.status, 200);
+    const obsJson = await obsRes.json();
+    assert.equal(obsJson.total_matching, 1282);
+    assert.equal(obsJson.co_location?.method_id, 'M2_POINT_PROXIMITY_6H');
+    assert.equal(obsJson.grid_concordance?.method_id, 'M2_GRID_DAILY_025_DEG');
+    assert.equal(
+      obsJson.grid_concordance?.jaccard_index,
+      nov13.spatial_concordance?.cell_concordance_pct,
+      'Observations grid_concordance Jaccard must match Calendar bin spatial_concordance Jaccard'
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      srv.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+

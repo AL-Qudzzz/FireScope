@@ -279,9 +279,9 @@ export function useFireScopeWorkspace() {
     zoom: number;
   }>({
     west: -180,
-    south: -85,
+    south: -90,
     east: 180,
-    north: 85,
+    north: 90,
     zoom: 2,
   });
 
@@ -290,9 +290,9 @@ export function useFireScopeWorkspace() {
     if (activeAoi.id === 'global-world') {
       setMapViewport({
         west: -180,
-        south: -85,
+        south: -90,
         east: 180,
-        north: 85,
+        north: 90,
         zoom: 2,
       });
     } else {

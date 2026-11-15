@@ -112,7 +112,7 @@ function withDuckDbQueue<T>(fn: (conn: DuckDBConnection) => Promise<T>): Promise
 }
 
 /**
- * Checks whether an AOI sits inside the spatial extent covered by the Indonesia FIRMS Parquet archive.
+ * Checks whether an AOI is wholly contained within the Indonesia FIRMS Parquet archive extent.
  */
 export function isAoiInParquetCoverage(aoi: AoiDefinition): boolean {
   const manifest = getParquetManifest();
@@ -125,6 +125,17 @@ export function isAoiInParquetCoverage(aoi: AoiDefinition): boolean {
   const spansOutsideSeAsia =
     b.east - b.west > 60 || b.west < 85 || b.east > 150 || b.south < -16 || b.north > 12;
   return overlapsIndonesia && !spansOutsideSeAsia;
+}
+
+/**
+ * Checks whether an AOI geographically intersects the Indonesia FIRMS Parquet archive extent
+ * (including 'global-world' or trans-regional custom AOIs that overlap Indonesia).
+ */
+export function doesAoiIntersectParquetCoverage(aoi: AoiDefinition): boolean {
+  const manifest = getParquetManifest();
+  if (!manifest || !manifest.available) return false;
+  const b = aoi.bbox;
+  return b.east >= 94.5 && b.west <= 141.8 && b.north >= -11.5 && b.south <= 6.5;
 }
 
 function buildFilterWhereClause(params: {
@@ -294,6 +305,84 @@ export async function queryParquetDailyBuckets(params: {
       frp_valid_count: Number(r.frp_valid_count ?? 0),
       frp_null_count: Number(r.frp_null_count ?? 0),
       frp_max_mw: r.frp_max_mw !== null && r.frp_max_mw !== undefined ? Number(r.frp_max_mw) : null,
+    }));
+  });
+}
+
+/**
+ * Queries exact daily 0.25° × 0.25° spatial cell co-location counts (both sensors, MODIS-only, VIIRS-only)
+ * directly inside DuckDB from daily_aggregates.parquet.
+ */
+export async function queryParquetDailyCellConcordance(params: {
+  bbox: BoundingBox;
+  startDate: string;
+  endDate: string;
+  sensor: SensorFilter;
+  platforms: PlatformId[];
+  processingStatus: ProcessingStatus | 'ALL';
+  dayNight: 'ALL' | 'D' | 'N';
+  modisMinConfidence: number;
+  viirsCategories: Array<'low' | 'nominal' | 'high'>;
+}): Promise<
+  Array<{
+    acq_date: string;
+    active_cells: number;
+    co_located_cells: number;
+    modis_only_cells: number;
+    viirs_only_cells: number;
+  }>
+> {
+  const manifest = getParquetManifest();
+  if (!manifest?.available) return [];
+
+  const cacheKey = `cellConc:${JSON.stringify({
+    b: params.bbox,
+    s: params.startDate,
+    e: params.endDate,
+    sn: params.sensor,
+    p: [...params.platforms].sort(),
+    ps: params.processingStatus,
+    dn: params.dayNight,
+    mc: params.modisMinConfidence,
+    vc: [...params.viirsCategories].sort(),
+  })}`;
+
+  return withParquetCache(cacheKey, async () => {
+    const whereSql = buildFilterWhereClause({ ...params, useCellBins: true });
+    const sql = `
+      SELECT
+        acq_date,
+        COUNT(*)::INTEGER AS active_cells,
+        SUM(CASE WHEN has_modis = 1 AND has_viirs = 1 THEN 1 ELSE 0 END)::INTEGER AS co_located_cells,
+        SUM(CASE WHEN has_modis = 1 AND has_viirs = 0 THEN 1 ELSE 0 END)::INTEGER AS modis_only_cells,
+        SUM(CASE WHEN has_modis = 0 AND has_viirs = 1 THEN 1 ELSE 0 END)::INTEGER AS viirs_only_cells
+      FROM (
+        SELECT
+          acq_date,
+          lat_bin,
+          lng_bin,
+          MAX(CASE WHEN sensor = 'MODIS' AND detection_count > 0 THEN 1 ELSE 0 END) AS has_modis,
+          MAX(CASE WHEN sensor = 'VIIRS' AND detection_count > 0 THEN 1 ELSE 0 END) AS has_viirs
+        FROM read_parquet(${sqlStr(DAILY_AGG_PARQUET)})
+        WHERE ${whereSql}
+        GROUP BY acq_date, lat_bin, lng_bin
+      )
+      WHERE has_modis = 1 OR has_viirs = 1
+      GROUP BY acq_date
+      ORDER BY acq_date ASC;
+    `;
+
+    const rows = await withDuckDbQueue(async (conn) => {
+      const res = await conn.runAndReadAll(sql);
+      return res.getRowObjects();
+    });
+
+    return rows.map((r) => ({
+      acq_date: String(r.acq_date),
+      active_cells: Number(r.active_cells ?? 0),
+      co_located_cells: Number(r.co_located_cells ?? 0),
+      modis_only_cells: Number(r.modis_only_cells ?? 0),
+      viirs_only_cells: Number(r.viirs_only_cells ?? 0),
     }));
   });
 }

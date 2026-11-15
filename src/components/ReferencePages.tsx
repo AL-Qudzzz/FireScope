@@ -197,6 +197,96 @@ export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
             </table>
           </div>
         )}
+
+        {dataStatus.live_reconciliation && (
+          <div
+            data-testid="live-pipeline-reconciliation"
+            className="p-3 rounded-[6px] bg-[var(--app-bg)] border border-[var(--border-subtle)] space-y-2 text-[11px]"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-[var(--text-primary)]">
+                Live Pipeline Stage Reconciliation (Raw CSV → Canonical → Map Sample)
+              </span>
+              <span className="font-mono text-[var(--success)]">
+                Canonical 24h = {dataStatus.live_reconciliation.canonical_observations.toLocaleString()}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 font-mono">
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Raw CSV Rows</div>
+                <div className="font-semibold text-[var(--text-primary)]">
+                  {dataStatus.live_reconciliation.raw_csv_rows.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Parsed Valid</div>
+                <div className="font-semibold text-[var(--text-primary)]">
+                  {dataStatus.live_reconciliation.parsed_valid_rows.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Exact Dups</div>
+                <div className="font-semibold text-[var(--warning)]">
+                  -{dataStatus.live_reconciliation.exact_duplicates_removed.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Superseded NRT</div>
+                <div className="font-semibold text-[var(--text-secondary)]">
+                  -{dataStatus.live_reconciliation.superseded_nrt_count.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Canonical 24h</div>
+                <div className="font-semibold text-[var(--success)]">
+                  {dataStatus.live_reconciliation.canonical_observations.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Offshore Flared</div>
+                <div className="font-semibold text-[var(--warning)]">
+                  -{dataStatus.live_reconciliation.excluded_offshore_count.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Onshore Eligible</div>
+                <div className="font-semibold text-[var(--text-primary)]">
+                  {dataStatus.live_reconciliation.onshore_map_eligible_count.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)]">
+                <div className="text-[10px] text-[var(--text-muted)]">Map Cap (z≤3)</div>
+                <div className="font-semibold text-[var(--viirs)]">
+                  {dataStatus.live_reconciliation.default_map_sample_limit.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-[var(--text-secondary)]">
+              {dataStatus.live_reconciliation.reconciliation_note}
+            </p>
+          </div>
+        )}
+
+        {dataStatus.indonesia_gap_backfill?.available && (
+          <div
+            data-testid="indonesia-gap-backfill-status"
+            className="p-3 rounded-[6px] bg-[var(--app-bg)] border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2 text-[11px]"
+          >
+            <div>
+              <span className="font-semibold text-[var(--text-primary)]">
+                Indonesia Archive-to-Live Gap Backfill ({dataStatus.indonesia_gap_backfill.target_date}):
+              </span>{' '}
+              <span className="text-[var(--text-secondary)]">
+                Bridges DuckDB Parquet archive end (2026-11-12) and live 24h streams using verified{' '}
+                <code className="font-mono">{dataStatus.indonesia_gap_backfill.source}</code> records.
+              </span>
+            </div>
+            <span className="px-2 py-0.5 rounded bg-[var(--surface-1)] border border-[var(--success)]/40 font-mono text-[var(--success)] font-semibold">
+              {dataStatus.indonesia_gap_backfill.canonical_observations.toLocaleString()} canonical detections (
+              {dataStatus.indonesia_gap_backfill.daily_buckets_count} buckets)
+            </span>
+          </div>
+        )}
       </section>
 
       {/* Platform Continuity Registry Table */}
@@ -649,6 +739,36 @@ export const MethodologyView: React.FC = () => {
               uses a non-parametric percentile and delta fallback rather than dividing by zero.
               Findings are labeled strictly as <em>“Unusual relative to this baseline”</em>, never as
               fire predictions.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-2">
+            <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
+              M2 Concordance Method Separation (Point vs. 0.25° Grid)
+            </h3>
+            <div className="p-2.5 rounded bg-[var(--app-bg)] font-mono text-[11px] text-[var(--text-primary)] space-y-1">
+              <div>M2_POINT_PROXIMITY_6H: d_ij ≤ max(1.5, 0.75(r_i + r_j)) ≤ 2.5 km, |Δt| ≤ 6h</div>
+              <div>M2_GRID_DAILY_025_DEG: (⌊lat/0.25⌋, ⌊lng/0.25⌋, acq_date_utc)</div>
+            </div>
+            <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
+              Acute point-proximity clustering (`M2_POINT_PROXIMITY_6H`, `FULL_BIN_POINTS`) and daily
+              0.25° grid-cell co-occurrence (`M2_GRID_DAILY_025_DEG`, `FULL_BIN_GRID_BUCKETS`) measure
+              distinct spatiotemporal scales (~1.5–2.5 km / ±6h vs. ~28 km / 24h UTC) and are never
+              conflated.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-[8px] bg-[var(--surface-1)] border border-[var(--border-subtle)] space-y-2">
+            <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
+              Exposure-Weighted VIIRS Constellation Normalization
+            </h3>
+            <div className="p-2.5 rounded bg-[var(--app-bg)] font-mono text-[11px] text-[var(--text-primary)] space-y-1">
+              <div>k_eff(W) = (Σ_p d_p(W)) / D(W),  R_&#123;VIIRS,eff&#125;(W) = V(W) / k_eff(W)</div>
+            </div>
+            <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
+              Accounts for partial-window satellite coverage (such as Suomi-NPP archive ending on
+              `2026-11-02`, yielding `26` platform-days across `12` UTC days or `k_eff = 2.17` on
+              `2026-11-01..2026-11-12` instead of integer `k = 3`).
             </p>
           </div>
         </div>

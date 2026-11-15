@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -13,6 +14,7 @@ import {
 } from './src/data/firmsArchiveData';
 import {
   deduplicateAndSupersedeObservations,
+  isOffshoreMarineObservation,
   isPointInAoi,
   isVerifiedOffshoreMarineCoordinate,
   validateBoundingBox,
@@ -33,6 +35,8 @@ import {
   DataSourceBacking,
   DataStatusResponse,
   Granularity,
+  IndonesiaGapBackfillStatus,
+  LivePipelineReconciliation,
   MapGridCell,
   MapGridResponse,
   MapHotspotsResponse,
@@ -65,6 +69,7 @@ import {
   isAoiInParquetCoverage,
   queryParquetAllBinPointObservations,
   queryParquetDailyBuckets,
+  queryParquetDailyCellConcordance,
   queryParquetHistoricalMonthlyTotals,
   queryParquetMapGrid,
   queryParquetRecentObservations,
@@ -78,6 +83,98 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const AREA_CACHE_FILE_PATH = path.resolve(__dirname, '.cache/firms_area_cache.json');
+const INDONESIA_GAP_BACKFILL_PATH = path.resolve(
+  __dirname,
+  'data/processed/indonesia_gap_backfill_2026_11_13.json'
+);
+
+interface IndonesiaGapBackfillArtifact extends IndonesiaGapBackfillStatus {
+  buckets: DailyAggregateBucket[];
+  observations: CanonicalObservation[];
+}
+
+let cachedIndonesiaGapBackfill: IndonesiaGapBackfillArtifact | null | undefined;
+
+function getIndonesiaGapBackfill(): IndonesiaGapBackfillArtifact | null {
+  if (cachedIndonesiaGapBackfill !== undefined) return cachedIndonesiaGapBackfill;
+  try {
+    if (!fs.existsSync(INDONESIA_GAP_BACKFILL_PATH)) {
+      cachedIndonesiaGapBackfill = null;
+      return null;
+    }
+    const raw = JSON.parse(
+      fs.readFileSync(INDONESIA_GAP_BACKFILL_PATH, 'utf8')
+    ) as Record<string, unknown>;
+    if (!raw || !Array.isArray(raw.observations)) {
+      cachedIndonesiaGapBackfill = null;
+      return null;
+    }
+    const observations = raw.observations as CanonicalObservation[];
+    const buckets = Array.isArray(raw.buckets)
+      ? (raw.buckets as DailyAggregateBucket[])
+      : observationsToDailyBuckets(observations);
+    let modisDetections = 0;
+    let viirsDetections = 0;
+    for (const obs of observations) {
+      if (obs.sensor === 'MODIS') modisDetections += 1;
+      else viirsDetections += 1;
+    }
+    const sourceFiles = Array.isArray(raw.source_files)
+      ? (raw.source_files as Array<{ sha256?: string }>)
+      : [];
+    const checksums = sourceFiles
+      .map((sf) => sf.sha256)
+      .filter((s): s is string => typeof s === 'string' && s.length > 0);
+
+    const targetDate = String(
+      raw.target_date ?? raw.gap_date ?? raw.coverage_date ?? '2026-11-13'
+    );
+    const canonicalCount =
+      typeof raw.canonical_observations === 'number'
+        ? raw.canonical_observations
+        : typeof raw.canonical_rows_total === 'number'
+        ? raw.canonical_rows_total
+        : observations.length;
+    const bucketCount =
+      typeof raw.daily_buckets_count === 'number'
+        ? raw.daily_buckets_count
+        : typeof raw.bucket_rows_total === 'number'
+        ? raw.bucket_rows_total
+        : buckets.length;
+
+    cachedIndonesiaGapBackfill = {
+      available: true,
+      gap_date: targetDate,
+      target_date: targetDate,
+      coverage_date: targetDate,
+      source: String(
+        raw.source ?? 'NASA FIRMS Area API v4 (Indonesia 2026-11-13 Gap Backfill)'
+      ),
+      retrieved_at_utc: String(
+        raw.retrieved_at_utc ?? raw.generated_at_utc ?? '2026-11-15T00:00:00Z'
+      ),
+      canonical_count: canonicalCount,
+      canonical_observations: canonicalCount,
+      canonical_rows_total: canonicalCount,
+      bucket_count: bucketCount,
+      daily_buckets_count: bucketCount,
+      bucket_rows_total: bucketCount,
+      modis_count: modisDetections,
+      modis_detections: modisDetections,
+      viirs_count: viirsDetections,
+      viirs_detections: viirsDetections,
+      checksums,
+      sha256_checksums: checksums,
+      feed_stats: sourceFiles,
+      buckets,
+      observations,
+    };
+    return cachedIndonesiaGapBackfill;
+  } catch {
+    cachedIndonesiaGapBackfill = null;
+    return null;
+  }
+}
 
 function isEligibleForAreaApi(aoi: AoiDefinition): boolean {
   if (aoi.id === 'global-world') return false;
@@ -550,12 +647,59 @@ async function computeServerCalendarAnalytics(params: {
         : prevUtcDate(liveCutoffDate)
       : endDate;
 
-    const parquetBuckets =
-      startDate <= parquetEndDate
-        ? await queryParquetDailyBuckets({
-            bbox: aoi.bbox,
-            startDate,
-            endDate: parquetEndDate,
+    const [parquetBuckets, parquetCellConcordance, historicalMonthTotals] =
+      await Promise.all([
+        startDate <= parquetEndDate
+          ? queryParquetDailyBuckets({
+              bbox: aoi.bbox,
+              startDate,
+              endDate: parquetEndDate,
+              sensor,
+              platforms,
+              processingStatus,
+              dayNight,
+              modisMinConfidence,
+              viirsCategories,
+            })
+          : Promise.resolve([]),
+        startDate <= parquetEndDate
+          ? queryParquetDailyCellConcordance({
+              bbox: aoi.bbox,
+              startDate,
+              endDate: parquetEndDate,
+              sensor,
+              platforms,
+              processingStatus,
+              dayNight,
+              modisMinConfidence,
+              viirsCategories,
+            })
+          : Promise.resolve([]),
+        includeBaselineHistory
+          ? queryParquetHistoricalMonthlyTotals({
+              bbox: aoi.bbox,
+              sensor,
+              platforms,
+              processingStatus,
+              dayNight,
+              modisMinConfidence,
+              viirsCategories,
+            })
+          : Promise.resolve([]),
+      ]);
+
+    const backfill = getIndonesiaGapBackfill();
+    const hasBackfillDateInQuery = Boolean(
+      backfill?.available &&
+        startDate <= backfill.gap_date &&
+        parquetEndDate >= backfill.gap_date
+    );
+    const backfillObs =
+      hasBackfillDateInQuery && backfill
+        ? filterCanonicalObservations(backfill.observations, {
+            aoi,
+            startDate: backfill.gap_date,
+            endDate: backfill.gap_date,
             sensor,
             platforms,
             processingStatus,
@@ -564,24 +708,18 @@ async function computeServerCalendarAnalytics(params: {
             viirsCategories,
           })
         : [];
-
-    const historicalMonthTotals = includeBaselineHistory
-      ? await queryParquetHistoricalMonthlyTotals({
-          bbox: aoi.bbox,
-          sensor,
-          platforms,
-          processingStatus,
-          dayNight,
-          modisMinConfidence,
-          viirsCategories,
-        })
-      : [];
+    const backfillBuckets = observationsToDailyBuckets(backfillObs);
 
     const liveBuckets = observationsToDailyBuckets(dedupedLive.canonical);
-    const combinedBuckets = [...parquetBuckets, ...liveBuckets];
+    const combinedBuckets = [...parquetBuckets, ...backfillBuckets, ...liveBuckets];
+
+    const effectiveArchiveEndDate =
+      backfill?.available && backfill.gap_date > manifest.date_range.max_date
+        ? backfill.gap_date
+        : manifest.date_range.max_date;
 
     const coveredDateWindows: Array<{ startDate: string; endDate: string }> = [
-      { startDate: manifest.date_range.min_date, endDate: manifest.date_range.max_date },
+      { startDate: manifest.date_range.min_date, endDate: effectiveArchiveEndDate },
     ];
     if (firmsSnap.connected && firmsSnap.minDate <= firmsSnap.maxDate) {
       coveredDateWindows.push({ startDate: firmsSnap.minDate, endDate: firmsSnap.maxDate });
@@ -590,7 +728,7 @@ async function computeServerCalendarAnalytics(params: {
     const hasParquetRows =
       startDate <= parquetEndDate &&
       endDate >= manifest.date_range.min_date &&
-      startDate <= manifest.date_range.max_date;
+      startDate <= effectiveArchiveEndDate;
     const hasLiveRows =
       firmsSnap.connected &&
       endDate >= firmsSnap.minDate &&
@@ -609,6 +747,11 @@ async function computeServerCalendarAnalytics(params: {
       sources.push(
         `NASA FIRMS Official Archive Parquet (${manifest.canonical_rows_total.toLocaleString()} Indonesia records, ${manifest.date_range.min_date}–${manifest.date_range.max_date})`
       );
+      if (hasBackfillDateInQuery && backfill) {
+        sources.push(
+          `NASA FIRMS Area API v4 Gap Backfill (Indonesia, ${backfill.gap_date}; ${backfill.canonical_count.toLocaleString()} canonical NRT detections bridging archive max_date to live stream)`
+        );
+      }
     }
     if (hasLiveRows) {
       sources.push(
@@ -617,17 +760,21 @@ async function computeServerCalendarAnalytics(params: {
     }
     if (sources.length === 0) {
       sources.push(
-        `No NASA source covers ${startDate}–${endDate} in Indonesia archive (${manifest.date_range.min_date}–${manifest.date_range.max_date}).`
+        `No NASA source covers ${startDate}–${endDate} in Indonesia archive (${manifest.date_range.min_date}–${effectiveArchiveEndDate}).`
       );
     }
 
-    const checksums = [
-      ...(hasParquetRows ? manifest.source_files.map((f) => f.sha256_checksum) : []),
-      ...(hasLiveRows ? firmsSnap.feedStats.map((f) => f.sha256) : []),
-    ];
+    const checksums = Array.from(
+      new Set([
+        ...(hasParquetRows ? manifest.source_files.map((f) => f.sha256_checksum) : []),
+        ...(hasBackfillDateInQuery && backfill ? backfill.checksums : []),
+        ...(hasLiveRows ? firmsSnap.feedStats.map((f) => f.sha256) : []),
+      ])
+    );
 
     const response = aggregateCalendarFromBuckets({
       buckets: combinedBuckets,
+      dailyCellConcordance: parquetCellConcordance,
       historicalMonthTotals,
       aoi,
       startDate,
@@ -640,22 +787,27 @@ async function computeServerCalendarAnalytics(params: {
       metric,
       platformRegistry: dynamicPlatforms,
       archiveCoverageStart: manifest.date_range.min_date,
-      archiveCoverageEnd: firmsSnap.connected ? liveMaxDate : manifest.date_range.max_date,
+      archiveCoverageEnd: firmsSnap.connected ? liveMaxDate : effectiveArchiveEndDate,
       coveredDateWindows,
       dataMode: 'LIVE_NASA_FIRMS',
+      dataBacking,
       demoNotice:
         hasParquetRows && hasLiveRows
-          ? `REAL NASA FIRMS DATA — DuckDB Parquet Archive (${manifest.date_range.min_date}–${parquetEndDate}) + Live 24h FIRMS (${liveCutoffDate}–${liveMaxDate}).`
+          ? `REAL NASA FIRMS DATA — DuckDB Parquet Archive (${manifest.date_range.min_date}–${manifest.date_range.max_date})${
+              hasBackfillDateInQuery && backfill
+                ? ` + Area API Gap Backfill (${backfill.gap_date})`
+                : ''
+            } + Live 24h FIRMS (${liveCutoffDate}–${liveMaxDate}).`
           : hasParquetRows
-          ? `REAL NASA FIRMS PARQUET ARCHIVE — ${manifest.canonical_rows_total.toLocaleString()} deduplicated NASA observations (${manifest.date_range.min_date}–${manifest.date_range.max_date}).`
+          ? `REAL NASA FIRMS PARQUET ARCHIVE — ${manifest.canonical_rows_total.toLocaleString()} deduplicated NASA observations (${manifest.date_range.min_date}–${effectiveArchiveEndDate}).`
           : hasLiveRows
           ? `LIVE NASA FIRMS Official Global Active-Fire Feeds (${firmsSnap.observations.length.toLocaleString()} observations synced ${firmsSnap.syncedAtUtc}).`
-          : `NO_SOURCE_DATA: Requested dates (${startDate}–${endDate}) are outside loaded NASA Parquet (${manifest.date_range.min_date}–${manifest.date_range.max_date}) and live stream windows.`,
+          : `NO_SOURCE_DATA: Requested dates (${startDate}–${endDate}) are outside loaded NASA Parquet (${manifest.date_range.min_date}–${effectiveArchiveEndDate}) and live stream windows.`,
       sources,
       retrievedAtUtc: firmsSnap.connected ? firmsSnap.syncedAtUtc : manifest.generated_at_utc,
       latestAcquisitionUtc: firmsSnap.connected
         ? firmsSnap.latestAcquisitionUtc
-        : `${manifest.date_range.max_date}T23:59:00Z`,
+        : `${effectiveArchiveEndDate}T23:59:00Z`,
       archiveChecksums: checksums,
       supersededNrtTotal:
         (hasParquetRows ? manifest.superseded_nrt_count : 0) + dedupedLive.supersededNrtCount,
@@ -688,7 +840,17 @@ async function computeServerCalendarAnalytics(params: {
   );
 
   let seededBuckets: DailyAggregateBucket[] = [];
+  const globalDailyCellConcordance: Array<{
+    acq_date: string;
+    active_cells: number;
+    co_located_cells: number;
+    modis_only_cells: number;
+    viirs_only_cells: number;
+  }> = [];
   let indParquetMergedInGlobal = false;
+  const backfill = getIndonesiaGapBackfill();
+  let indBackfillMergedInGlobal = false;
+
   if (isGlobalSeeded && startDate <= historicalEndDate) {
     seededBuckets = queryGlobalPresetBuckets({
       bbox: aoi.bbox,
@@ -709,10 +871,43 @@ async function computeServerCalendarAnalytics(params: {
         const winEnd =
           rawWinEnd <= manifest.date_range.max_date ? rawWinEnd : manifest.date_range.max_date;
         if (winStart <= winEnd) {
-          const indBuckets = await queryParquetDailyBuckets({
-            bbox: manifest.coverage_bbox,
-            startDate: winStart,
-            endDate: winEnd,
+          const [indBuckets, indCells] = await Promise.all([
+            queryParquetDailyBuckets({
+              bbox: manifest.coverage_bbox,
+              startDate: winStart,
+              endDate: winEnd,
+              sensor,
+              platforms,
+              processingStatus,
+              dayNight,
+              modisMinConfidence,
+              viirsCategories,
+            }),
+            queryParquetDailyCellConcordance({
+              bbox: manifest.coverage_bbox,
+              startDate: winStart,
+              endDate: winEnd,
+              sensor,
+              platforms,
+              processingStatus,
+              dayNight,
+              modisMinConfidence,
+              viirsCategories,
+            }),
+          ]);
+          seededBuckets.push(...indBuckets);
+          globalDailyCellConcordance.push(...indCells);
+          indParquetMergedInGlobal = true;
+        }
+        if (
+          backfill?.available &&
+          winStart <= backfill.gap_date &&
+          rawWinEnd >= backfill.gap_date
+        ) {
+          const bfObs = filterCanonicalObservations(backfill.observations, {
+            aoi,
+            startDate: backfill.gap_date,
+            endDate: backfill.gap_date,
             sensor,
             platforms,
             processingStatus,
@@ -720,8 +915,8 @@ async function computeServerCalendarAnalytics(params: {
             modisMinConfidence,
             viirsCategories,
           });
-          seededBuckets.push(...indBuckets);
-          indParquetMergedInGlobal = true;
+          seededBuckets.push(...observationsToDailyBuckets(bfObs));
+          indBackfillMergedInGlobal = true;
         }
       }
     }
@@ -828,6 +1023,11 @@ async function computeServerCalendarAnalytics(params: {
         `NASA FIRMS Historical Parquet Archive (Indonesia extent, ${manifest.canonical_rows_total.toLocaleString()} records merged within covered Oct-Nov 2024/2025/2026 windows)`
       );
     }
+    if (indBackfillMergedInGlobal && backfill) {
+      sources.push(
+        `NASA FIRMS Area API v4 Gap Backfill (Indonesia, ${backfill.gap_date}; ${backfill.canonical_count.toLocaleString()} detections)`
+      );
+    }
   }
   if (hasAreaOverlap) {
     sources.push(
@@ -851,6 +1051,7 @@ async function computeServerCalendarAnalytics(params: {
       ...(indParquetMergedInGlobal && manifest?.available
         ? manifest.source_files.map((f) => f.sha256_checksum)
         : []),
+      ...(indBackfillMergedInGlobal && backfill ? backfill.checksums : []),
       ...areaFeedStats.map((f) => f.sha256),
       ...(hasLiveRows ? firmsSnap.feedStats.map((f) => f.sha256) : []),
     ])
@@ -886,6 +1087,7 @@ async function computeServerCalendarAnalytics(params: {
 
   const response = aggregateCalendarFromBuckets({
     buckets: combinedBuckets,
+    dailyCellConcordance: globalDailyCellConcordance,
     aoi,
     startDate,
     endDate,
@@ -900,6 +1102,7 @@ async function computeServerCalendarAnalytics(params: {
     archiveCoverageEnd: archiveEnd,
     coveredDateWindows,
     dataMode: 'LIVE_NASA_FIRMS',
+    dataBacking,
     demoNotice:
       noticeParts.length > 0
         ? aoi.id === 'global-world'
@@ -1023,13 +1226,39 @@ export function createApiApp(options?: {
       ? `${manifest.date_range.max_date}T23:59:59Z`
       : LATEST_ACQUISITION_UTC;
 
+    const backfill = getIndonesiaGapBackfill();
+    let liveOffshoreCount = 0;
+    for (let i = 0; i < firmsSnap.observations.length; i++) {
+      if (isOffshoreMarineObservation(firmsSnap.observations[i])) {
+        liveOffshoreCount += 1;
+      }
+    }
+    const canonicalCount = firmsSnap.observations.length;
+    const liveReconciliation: LivePipelineReconciliation = {
+      raw_csv_rows: firmsSnap.rawCsvRows ?? canonicalCount,
+      parsed_valid_rows: firmsSnap.parsedValidRows ?? canonicalCount,
+      exact_duplicates_removed: firmsSnap.exactDuplicatesRemoved ?? 0,
+      superseded_nrt_count: firmsSnap.supersededNrtCount ?? 0,
+      canonical_observations: canonicalCount,
+      in_global_world_bbox_count: canonicalCount,
+      excluded_offshore_count: liveOffshoreCount,
+      onshore_map_eligible_count: canonicalCount - liveOffshoreCount,
+      default_map_sample_limit: 5000,
+      reconciliation_note:
+        'Stage 1 (raw_csv_rows) -> Stage 2 (parsed_valid_rows) -> Stage 3 (canonical_observations = parsed_valid_rows - exact_duplicates_removed - superseded_nrt_count) -> Stage 4 (in_global_world_bbox_count = canonical_observations over WGS84 [-180,-90,180,90]) -> Stage 5 (onshore_map_eligible_count = canonical_observations - excluded_offshore_count) -> Stage 6 (rendered_sample_count <= default_map_sample_limit).',
+    };
+
     const response: DataStatusResponse = {
       status: hasPlatformGap ? 'PARTIAL_PLATFORM_GAP' : 'OK',
       data_mode: dataMode,
       demo_banner_text: firmsSnap.connected
         ? `LIVE NASA FIRMS Official Global Active-Fire Feeds (${firmsSnap.observations.length.toLocaleString()} detections / 24h)${
             manifest?.available
-              ? ` + Indonesia NASA Parquet (${manifest.canonical_rows_total.toLocaleString()} rows, ${manifest.date_range.min_date}–${manifest.date_range.max_date})`
+              ? ` + Indonesia NASA Parquet (${manifest.canonical_rows_total.toLocaleString()} rows, ${manifest.date_range.min_date}–${manifest.date_range.max_date})${
+                  backfill?.available
+                    ? ` + Nov 13 Backfill (${backfill.canonical_count.toLocaleString()} rows)`
+                    : ''
+                }`
               : ''
           }${
             globalManifest?.available
@@ -1061,6 +1290,30 @@ export function createApiApp(options?: {
       live_firms_min_date: firmsSnap.minDate,
       live_firms_max_date: firmsSnap.maxDate,
       live_firms_feeds: firmsSnap.feedStats,
+      live_reconciliation: liveReconciliation,
+      indonesia_gap_backfill: backfill
+        ? {
+            available: backfill.available,
+            gap_date: backfill.gap_date,
+            target_date: backfill.target_date,
+            coverage_date: backfill.coverage_date,
+            source: backfill.source,
+            retrieved_at_utc: backfill.retrieved_at_utc,
+            canonical_count: backfill.canonical_count,
+            canonical_observations: backfill.canonical_observations,
+            canonical_rows_total: backfill.canonical_rows_total,
+            bucket_count: backfill.bucket_count,
+            daily_buckets_count: backfill.daily_buckets_count,
+            bucket_rows_total: backfill.bucket_rows_total,
+            modis_count: backfill.modis_count,
+            modis_detections: backfill.modis_detections,
+            viirs_count: backfill.viirs_count,
+            viirs_detections: backfill.viirs_detections,
+            feed_stats: backfill.feed_stats,
+            checksums: backfill.checksums,
+            sha256_checksums: backfill.sha256_checksums,
+          }
+        : null,
       firms_map_key_configured: mapKeyConfigured,
       live_eonet_connected: isEonetConnected,
       live_eonet_event_count: eonetItems.length,
@@ -1144,9 +1397,9 @@ export function createApiApp(options?: {
     }
 
     const west = req.query.west !== undefined ? Number(req.query.west) : -180;
-    const south = req.query.south !== undefined ? Number(req.query.south) : -85;
+    const south = req.query.south !== undefined ? Number(req.query.south) : -90;
     const east = req.query.east !== undefined ? Number(req.query.east) : 180;
-    const north = req.query.north !== undefined ? Number(req.query.north) : 85;
+    const north = req.query.north !== undefined ? Number(req.query.north) : 90;
     if (
       ![west, south, east, north].every(Number.isFinite) ||
       south > north ||
@@ -1196,6 +1449,7 @@ export function createApiApp(options?: {
 
     const firmsSnap = await getFirmsSnap();
     const manifest = getParquetManifest();
+    const backfill = getIndonesiaGapBackfill();
     const mapKey = getMapKey();
     const globalManifest = getGlobalPresetsManifest();
     const liveCutoff = firmsSnap.connected ? firmsSnap.minDate : '9999-12-31';
@@ -1250,6 +1504,28 @@ export function createApiApp(options?: {
               sourcePool = [...sourcePool, ...pqRes.items];
               usedParquet = true;
             }
+          }
+        }
+        if (
+          backfill?.available &&
+          startDate <= backfill.gap_date &&
+          histEnd >= backfill.gap_date
+        ) {
+          parquetCovered = true;
+          const bfObs = filterCanonicalObservations(backfill.observations, {
+            aoi: aoiResolution.aoi,
+            startDate: backfill.gap_date,
+            endDate: backfill.gap_date,
+            sensor: filterCheck.sensor!,
+            platforms: filterCheck.platforms!,
+            processingStatus: filterCheck.processingStatus!,
+            dayNight: filterCheck.dayNight!,
+            modisMinConfidence: filterCheck.modisMinConfidence!,
+            viirsCategories: filterCheck.viirsCategories!,
+          });
+          if (bfObs.length > 0) {
+            sourcePool = [...sourcePool, ...bfObs];
+            usedParquet = true;
           }
         }
       }
@@ -1435,9 +1711,9 @@ export function createApiApp(options?: {
     }
 
     const west = req.query.west !== undefined ? Number(req.query.west) : -180;
-    const south = req.query.south !== undefined ? Number(req.query.south) : -85;
+    const south = req.query.south !== undefined ? Number(req.query.south) : -90;
     const east = req.query.east !== undefined ? Number(req.query.east) : 180;
-    const north = req.query.north !== undefined ? Number(req.query.north) : 85;
+    const north = req.query.north !== undefined ? Number(req.query.north) : 90;
     if (![west, south, east, north].every(Number.isFinite) || south > north || west > east) {
       res.status(400).json({
         error: {
@@ -1480,6 +1756,7 @@ export function createApiApp(options?: {
 
     const liveCutoff = firmsSnap.connected ? firmsSnap.minDate : '9999-12-31';
     const manifest = getParquetManifest();
+    const backfill = getIndonesiaGapBackfill();
 
     const normalizeLng = (lng: number) => ((((lng + 180) % 360) + 360) % 360) - 180;
     const isFullWorld = east - west >= 359;
@@ -1494,9 +1771,9 @@ export function createApiApp(options?: {
       aoiResolution.aoi.id === 'global-world'
         ? {
             west: normWest,
-            south: Math.max(-85, south),
+            south: Math.max(-90, south),
             east: normEast,
-            north: Math.min(85, north),
+            north: Math.min(90, north),
           }
         : aoiResolution.aoi.bbox;
 
@@ -1530,10 +1807,54 @@ export function createApiApp(options?: {
     let globalPresetsCovered = false;
     let areaApiUsed = false;
 
+    if (
+      overlapsParquet &&
+      backfill?.available &&
+      startDate <= backfill.gap_date &&
+      histGridEnd >= backfill.gap_date
+    ) {
+      const bfObs = backfill.observations.filter((r) => {
+        if (r.latitude < effectiveBbox.south || r.latitude > effectiveBbox.north) return false;
+        if (r.longitude < effectiveBbox.west || r.longitude > effectiveBbox.east) return false;
+        if (filterCheck.sensor !== 'ALL' && r.sensor !== filterCheck.sensor) return false;
+        if (!filterCheck.platforms!.includes(r.platform)) return false;
+        if (
+          filterCheck.processingStatus !== 'ALL' &&
+          r.processing_status !== filterCheck.processingStatus
+        ) {
+          return false;
+        }
+        if (filterCheck.dayNight !== 'ALL' && r.daynight_native !== filterCheck.dayNight) {
+          return false;
+        }
+        if (r.sensor === 'MODIS' && typeof r.confidence_native === 'number') {
+          if (r.confidence_native < filterCheck.modisMinConfidence!) return false;
+        }
+        if (r.sensor === 'VIIRS' && typeof r.confidence_native === 'string') {
+          if (!filterCheck.viirsCategories!.includes(r.confidence_native as 'low' | 'nominal' | 'high')) {
+            return false;
+          }
+        }
+        return true;
+      });
+      const bfCells = aggregateObservationsToGrid({
+        observations: bfObs,
+        cellSizeDeg: resDeg,
+        sourceBacking: 'PARQUET',
+      });
+      parquetCells.push(...bfCells);
+    }
+
+    const effectiveMaxParquetDate =
+      backfill?.available &&
+      backfill.gap_date > (manifest?.date_range.max_date ?? '')
+        ? backfill.gap_date
+        : manifest?.date_range.max_date ?? '';
+
     const parquetCovered =
       overlapsParquet &&
       Boolean(manifest?.available) &&
-      startDate <= (manifest?.date_range.max_date ?? '') &&
+      startDate <= effectiveMaxParquetDate &&
       histGridEnd >= (manifest?.date_range.min_date ?? '9999-12-31');
 
     if (startDate <= histGridEnd) {
@@ -2171,8 +2492,18 @@ export function createApiApp(options?: {
 
   // 5. GET /api/v1/observations (bounded and cursor-paginated)
   app.get('/api/v1/observations', async (req, res) => {
-    const startUtc = String(req.query.start_datetime_utc ?? '2026-11-12T00:00:00Z').trim();
-    const endUtc = String(req.query.end_datetime_utc ?? '2026-11-13T23:59:59Z').trim();
+    const rawStartDateParam = req.query.start_date
+      ? `${String(req.query.start_date).trim()}T00:00:00Z`
+      : undefined;
+    const rawEndDateParam = req.query.end_date
+      ? `${String(req.query.end_date).trim()}T23:59:59Z`
+      : undefined;
+    const startUtc = String(
+      req.query.start_datetime_utc ?? rawStartDateParam ?? '2026-11-12T00:00:00Z'
+    ).trim();
+    const endUtc = String(
+      req.query.end_datetime_utc ?? rawEndDateParam ?? '2026-11-13T23:59:59Z'
+    ).trim();
     const limitRaw = req.query.limit !== undefined ? Number(req.query.limit) : 50;
 
     if (!Number.isInteger(limitRaw) || limitRaw < 1 || limitRaw > 250) {
@@ -2272,8 +2603,11 @@ export function createApiApp(options?: {
     let historicalItems: CanonicalObservation[] = [];
     let historicalTotal = 0;
     let binCoLocation: CoLocationSummary | undefined;
+    let binGridConcordance: CoLocationSummary | undefined;
     let usedAreaApi = false;
+    let usedBackfill = false;
     const inParquet = isAoiInParquetCoverage(targetAoi);
+    const backfill = getIndonesiaGapBackfill();
 
     let globalMergedIndParquet = false;
     if (inParquet && startDateStr < liveCutoff) {
@@ -2281,9 +2615,34 @@ export function createApiApp(options?: {
       const pqRawEnd = endDateStr < liveCutoff ? endDateStr : prevUtcDate(liveCutoff);
       const pqEnd = pqRawEnd <= pqMaxDate ? pqRawEnd : pqMaxDate;
 
-      if (endDateStr >= '2026-10-01' && pqEnd >= '2026-10-01') {
-        const remainingLimit = Math.max(1, limitRaw - Math.max(0, liveMatching.length - cursorOffset));
-        const pqOffset = Math.max(0, cursorOffset - liveMatching.length);
+      const backfillMatching =
+        backfill?.available &&
+        startDateStr <= backfill.gap_date &&
+        pqRawEnd >= backfill.gap_date
+          ? filterCanonicalObservations(backfill.observations, {
+              aoi: targetAoi,
+              startMs,
+              endMs,
+              sensor: filterCheck.sensor!,
+              platforms: filterCheck.platforms!,
+              processingStatus: filterCheck.processingStatus!,
+              dayNight: filterCheck.dayNight!,
+              modisMinConfidence: filterCheck.modisMinConfidence!,
+              viirsCategories: filterCheck.viirsCategories!,
+            }).sort((a, b) => Date.parse(b.acq_datetime_utc) - Date.parse(a.acq_datetime_utc))
+          : [];
+      if (backfillMatching.length > 0) {
+        usedBackfill = true;
+      }
+
+      const preParquetItems = [...liveMatching, ...backfillMatching];
+
+      if (endDateStr >= '2026-10-01' && pqEnd >= '2026-10-01' && startDateStr <= pqEnd) {
+        const remainingLimit = Math.max(
+          1,
+          limitRaw - Math.max(0, preParquetItems.length - cursorOffset)
+        );
+        const pqOffset = Math.max(0, cursorOffset - preParquetItems.length);
         const pqRes = await queryParquetRecentObservations({
           bbox: targetAoi.bbox,
           startUtc: startDateStr < '2026-10-01' ? '2026-10-01T00:00:00Z' : startUtc,
@@ -2315,26 +2674,59 @@ export function createApiApp(options?: {
         viirsCategories: filterCheck.viirsCategories!,
       };
 
+      const pqSpatialBuckets =
+        pqEnd >= startDateStr
+          ? await queryParquetSpatialBuckets(parquetQueryParams)
+          : [];
+      const recentSpatialBuckets = observationsToDailyBuckets(preParquetItems);
+      binGridConcordance =
+        computeBucketSpatialConcordance(
+          [...pqSpatialBuckets, ...recentSpatialBuckets],
+          200,
+          {
+            sourceBacking:
+              liveMatching.length > 0
+                ? 'HYBRID_PARQUET_AND_LIVE'
+                : 'REAL_NASA_ARCHIVE_PARQUET',
+          }
+        ) ?? undefined;
+
       if (
         startDateStr >= '2026-10-01' &&
-        pqEnd >= '2026-10-01' &&
-        historicalTotal + liveMatching.length <= 25000
+        historicalTotal + preParquetItems.length <= 25000
       ) {
-        const allPqObs = await queryParquetAllBinPointObservations(parquetQueryParams, 25000);
-        const combinedForCoLoc = [...liveMatching, ...allPqObs];
+        const allPqObs =
+          pqEnd >= '2026-10-01' && startDateStr <= pqEnd
+            ? await queryParquetAllBinPointObservations(parquetQueryParams, 25000)
+            : [];
+        const combinedForCoLoc = [...preParquetItems, ...allPqObs];
         if (combinedForCoLoc.length > 0) {
-          binCoLocation = clusterCrossSensorObservations(combinedForCoLoc, 6, 200);
+          binCoLocation = clusterCrossSensorObservations(combinedForCoLoc, 6, 200, {
+            sourceBacking:
+              liveMatching.length > 0
+                ? 'HYBRID_PARQUET_AND_LIVE'
+                : 'REAL_NASA_ARCHIVE_PARQUET',
+          });
         }
-      } else if (pqEnd >= startDateStr) {
-        const pqSpatialBuckets = await queryParquetSpatialBuckets(parquetQueryParams);
-        const liveSpatialBuckets = observationsToDailyBuckets(liveMatching);
-        binCoLocation =
-          computeBucketSpatialConcordance([...pqSpatialBuckets, ...liveSpatialBuckets], 200) ??
-          (liveMatching.length > 0
-            ? clusterCrossSensorObservations(liveMatching, 6, 200)
-            : undefined);
-      } else if (liveMatching.length > 0) {
-        binCoLocation = clusterCrossSensorObservations(liveMatching, 6, 200);
+      } else if (binGridConcordance) {
+        binCoLocation = binGridConcordance;
+      } else if (preParquetItems.length > 0) {
+        binCoLocation = clusterCrossSensorObservations(preParquetItems, 6, 200);
+      }
+
+      // Prepend backfillMatching to historicalItems for pagination after liveMatching
+      if (backfillMatching.length > 0) {
+        const bfOffset = Math.max(0, cursorOffset - liveMatching.length);
+        const remForBf = Math.max(
+          0,
+          limitRaw - Math.max(0, liveMatching.length - cursorOffset)
+        );
+        const bfSlice =
+          bfOffset < backfillMatching.length
+            ? backfillMatching.slice(bfOffset, bfOffset + remForBf)
+            : [];
+        historicalItems = [...bfSlice, ...historicalItems].slice(0, remForBf);
+        historicalTotal += backfillMatching.length;
       }
     } else if (!inParquet && startDateStr < liveCutoff) {
       const pqEnd = endDateStr < liveCutoff ? endDateStr : prevUtcDate(liveCutoff);
@@ -2396,6 +2788,31 @@ export function createApiApp(options?: {
               presetBuckets.push(...indBuckets);
               globalMergedIndParquet = true;
             }
+            if (
+              backfill?.available &&
+              wStart <= backfill.gap_date &&
+              rawWEnd >= backfill.gap_date
+            ) {
+              const bfObs = filterCanonicalObservations(backfill.observations, {
+                aoi: targetAoi,
+                startMs,
+                endMs,
+                sensor: filterCheck.sensor!,
+                platforms: filterCheck.platforms!,
+                processingStatus: filterCheck.processingStatus!,
+                dayNight: filterCheck.dayNight!,
+                modisMinConfidence: filterCheck.modisMinConfidence!,
+                viirsCategories: filterCheck.viirsCategories!,
+              });
+              if (bfObs.length > 0) {
+                realGlobalMatched.push(...bfObs);
+                realGlobalMatched.sort(
+                  (a, b) => Date.parse(b.acq_datetime_utc) - Date.parse(a.acq_datetime_utc)
+                );
+                presetBuckets.push(...observationsToDailyBuckets(bfObs));
+                usedBackfill = true;
+              }
+            }
           }
 
           if (pqEnd >= '2026-10-01') {
@@ -2451,8 +2868,12 @@ export function createApiApp(options?: {
         }
 
         const liveBuckets = observationsToDailyBuckets(liveMatching);
+        binGridConcordance =
+          computeBucketSpatialConcordance([...presetBuckets, ...liveBuckets], 200, {
+            sourceBacking: 'GLOBAL_PRESETS_ARCHIVE',
+          }) ?? undefined;
         binCoLocation =
-          computeBucketSpatialConcordance([...presetBuckets, ...liveBuckets], 200) ??
+          binGridConcordance ??
           (liveMatching.length > 0
             ? clusterCrossSensorObservations(liveMatching, 6, 200)
             : undefined);
@@ -2483,7 +2904,15 @@ export function createApiApp(options?: {
         usedAreaApi = realGlobalMatched.length > 0;
         const combinedForCoLoc = [...liveMatching, ...realGlobalMatched];
         if (combinedForCoLoc.length > 0) {
-          binCoLocation = clusterCrossSensorObservations(combinedForCoLoc, 6, 200);
+          binCoLocation = clusterCrossSensorObservations(combinedForCoLoc, 6, 200, {
+            sourceBacking: 'FIRMS_AREA_API',
+          });
+          binGridConcordance =
+            computeBucketSpatialConcordance(
+              observationsToDailyBuckets(combinedForCoLoc),
+              200,
+              { sourceBacking: 'FIRMS_AREA_API' }
+            ) ?? undefined;
         }
       }
 
@@ -2495,7 +2924,15 @@ export function createApiApp(options?: {
     }
 
     if (!binCoLocation && liveMatching.length > 0) {
-      binCoLocation = clusterCrossSensorObservations(liveMatching, 6, 200);
+      binCoLocation = clusterCrossSensorObservations(liveMatching, 6, 200, {
+        sourceBacking: 'LIVE_NASA_FIRMS',
+      });
+    }
+    if (!binGridConcordance && liveMatching.length > 0) {
+      binGridConcordance =
+        computeBucketSpatialConcordance(observationsToDailyBuckets(liveMatching), 200, {
+          sourceBacking: 'LIVE_NASA_FIRMS',
+        }) ?? undefined;
     }
 
     const totalMatching = liveMatching.length + historicalTotal;
@@ -2515,6 +2952,11 @@ export function createApiApp(options?: {
     }
     if (inParquet && startDateStr < liveCutoff && endDateStr >= '2026-10-01') {
       obsSources.push('NASA FIRMS Recent Observations Parquet (Indonesia, Oct–Nov 2026)');
+    }
+    if (usedBackfill && backfill) {
+      obsSources.push(
+        `NASA FIRMS Area API v4 Gap Backfill (Indonesia, ${backfill.gap_date})`
+      );
     }
     if (inParquet && startDateStr < '2026-10-01' && binCoLocation) {
       obsSources.push('NASA FIRMS Historical Daily Aggregates Parquet (Indonesia, 2000–2026)');
@@ -2543,6 +2985,7 @@ export function createApiApp(options?: {
       limit: limitRaw,
       next_cursor: nextCursor,
       co_location: binCoLocation,
+      grid_concordance: binGridConcordance,
       method: {
         id: 'M0_RAW',
         version: '1.0.0',

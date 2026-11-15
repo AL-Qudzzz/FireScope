@@ -24,7 +24,10 @@ import {
   generateAoiComparisonCsv,
   generatePeriodComparisonCsv,
 } from '../science/comparisonScience';
-import { getExpectedActivePlatforms } from '../science/harmonizationScience';
+import {
+  computePlatformExposure,
+  getExpectedActivePlatforms,
+} from '../science/harmonizationScience';
 import { fetchLiveEonetObservations } from './eonetLiveService';
 
 export { generateAoiComparisonCsv, generatePeriodComparisonCsv };
@@ -530,6 +533,9 @@ function escapeCsvCell(value: string): string {
 
 export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): string {
   const h = analytics.harmonization;
+  const csh = analytics.cross_sensor_harmonization;
+  const vpn = analytics.viirs_platform_normalization;
+
   const headerComments = [
     `# FireScope Analytical Export — Active-Fire Observation Activity`,
     `# Data Mode: ${analytics.data_mode} (${analytics.demo_notice})`,
@@ -545,6 +551,21 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
     `# Retrieved At (UTC): ${analytics.provenance.retrieved_at_utc} | Latest Acquisition (UTC): ${analytics.provenance.latest_acquisition_utc}`,
     `# Raw File SHA-256 Checksums: ${analytics.provenance.archive_checksums.join(', ')}`,
   ];
+
+  if (csh) {
+    headerComments.push(
+      `# M2 Cross-Sensor Harmonization: ${csh.method_id} v${csh.method_version} | Spatial Method: ${csh.spatial_concordance.method_id ?? 'M2_GRID_DAILY_025_DEG'} (${csh.spatial_concordance.spatial_resolution ?? '0.25_deg_wgs84_grid'}, ${csh.spatial_concordance.temporal_resolution ?? '1_utc_day'})`,
+      `# M2 Spatial Summary: total_active_cells=${csh.spatial_concordance.total_active_cells}, both_sensors_cells=${csh.spatial_concordance.co_located_cells}, modis_only_cells=${csh.spatial_concordance.modis_only_cells}, viirs_only_cells=${csh.spatial_concordance.viirs_only_cells}, jaccard_pct=${csh.spatial_concordance.cell_concordance_pct}%, modis_co_detected_by_viirs_pct=${csh.spatial_concordance.modis_cell_co_detected_pct}%`,
+      `# M2 Temporal Summary: co_active_bins=${csh.temporal_concordance.co_active_bins}/${csh.temporal_concordance.total_active_bins} (${csh.temporal_concordance.temporal_jaccard_pct}%), log_r=${csh.temporal_concordance.log_pearson_r ?? 'N/A'}`
+    );
+  }
+
+  if (vpn) {
+    headerComments.push(
+      `# VIIRS Exposure-Weighted Normalization: ${vpn.method_id} | Formula: ${vpn.formula}`,
+      `# VIIRS Exposure Summary: window_days=${vpn.window_days ?? 'N/A'}, viirs_platform_days=${vpn.viirs_platform_days ?? 'N/A'}, k_eff=${vpn.effective_viirs_platforms ?? vpn.expected_viirs_platforms}, raw_viirs=${vpn.raw_viirs_detections}, viirs_per_effective_sat=${vpn.viirs_per_effective_platform ?? vpn.normalized_viirs_per_platform ?? 'N/A'}, integer_k_rate=${vpn.normalized_viirs_per_platform ?? 'N/A'}`
+    );
+  }
 
   if (h) {
     headerComments.push(
@@ -585,6 +606,23 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
     'viirs_active_satellites',
     'modis_per_satellite',
     'viirs_per_satellite',
+    'viirs_platform_days',
+    'viirs_effective_platform_count',
+    'viirs_per_effective_platform',
+    'm2_method_id',
+    'm2_spatial_resolution',
+    'm2_temporal_resolution',
+    'modis_eligible_cells',
+    'viirs_eligible_cells',
+    'co_detected_cells',
+    'modis_only_cells',
+    'viirs_only_cells',
+    'intersection_count',
+    'union_count',
+    'jaccard_index',
+    'modis_conditional_rate',
+    'viirs_conditional_rate',
+    'source_backing',
     ...(h
       ? [
           'm3_bridged_modis_equiv',
@@ -597,20 +635,77 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
   ];
 
   const rows = analytics.series.map((b) => {
+    const isNoData = b.coverage_state === 'NO_SOURCE_DATA';
     const exp = getExpectedActivePlatforms(
       b.time_bin_start_utc,
       b.time_bin_end_utc,
       analytics.query.platforms,
       b.platform_breakdown
     );
+    const exposure = computePlatformExposure({
+      startUtc: b.time_bin_start_utc,
+      endUtc: b.time_bin_end_utc,
+      selectedPlatforms: analytics.query.platforms,
+      observedBreakdown: b.platform_breakdown,
+    });
+
+    const viirsPlatformDays =
+      b.viirs_platform_days ?? exposure.viirsPlatformDays;
+    const viirsEffCount =
+      b.viirs_effective_platform_count ?? exposure.viirsEffectivePlatforms;
+
     const modisPerSat =
-      b.values.MODIS !== null && exp.modis > 0
-        ? Number((b.values.MODIS / exp.modis).toFixed(1))
+      !isNoData && b.values.MODIS !== null && exp.modis > 0
+        ? Number((b.values.MODIS / exp.modis).toFixed(2))
         : '';
     const viirsPerSat =
-      b.values.VIIRS !== null && exp.viirs > 0
-        ? Number((b.values.VIIRS / exp.viirs).toFixed(1))
+      !isNoData && b.values.VIIRS !== null && exp.viirs > 0
+        ? Number((b.values.VIIRS / exp.viirs).toFixed(2))
         : '';
+    const viirsPerEff =
+      !isNoData && b.values.VIIRS !== null
+        ? b.viirs_per_effective_platform ??
+          (viirsEffCount > 0 ? Number((b.values.VIIRS / viirsEffCount).toFixed(2)) : '')
+        : '';
+
+    const sc = !isNoData ? b.spatial_concordance : undefined;
+    const modisCells =
+      sc !== undefined
+        ? sc.modis_eligible_count ?? sc.co_located_cells + sc.modis_only_cells
+        : '';
+    const viirsCells =
+      sc !== undefined
+        ? sc.viirs_eligible_count ?? sc.co_located_cells + sc.viirs_only_cells
+        : '';
+    const coDetectedCells = sc !== undefined ? sc.co_located_cells : '';
+    const modisOnlyCells = sc !== undefined ? sc.modis_only_cells : '';
+    const viirsOnlyCells = sc !== undefined ? sc.viirs_only_cells : '';
+    const intersectionCount =
+      sc !== undefined ? sc.intersection_count ?? sc.co_located_cells : '';
+    const unionCount =
+      sc !== undefined ? sc.union_count ?? sc.total_active_cells : '';
+    const jaccardIdx =
+      sc !== undefined
+        ? sc.jaccard_index ??
+          (sc.cell_concordance_pct !== null && sc.cell_concordance_pct !== undefined
+            ? Number((sc.cell_concordance_pct / 100).toFixed(4))
+            : '')
+        : '';
+    const modisCondRate =
+      sc !== undefined
+        ? sc.modis_conditional_rate ??
+          (sc.modis_cell_co_detected_pct !== null
+            ? Number((sc.modis_cell_co_detected_pct / 100).toFixed(4))
+            : '')
+        : '';
+    const viirsCondRate =
+      sc !== undefined
+        ? sc.viirs_conditional_rate ??
+          (sc.viirs_cell_co_detected_pct !== null
+            ? Number((sc.viirs_cell_co_detected_pct / 100).toFixed(4))
+            : '')
+        : '';
+
     const m3Pt = m3PointMap?.get(b.bin_key);
 
     return [
@@ -621,24 +716,41 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
       b.values.MODIS ?? 'NO_SOURCE_DATA',
       b.values.VIIRS ?? 'NO_SOURCE_DATA',
       b.pooled_observation_count ?? 'NO_SOURCE_DATA',
-      b.platform_breakdown.TERRA,
-      b.platform_breakdown.AQUA,
-      b.platform_breakdown.SNPP,
-      b.platform_breakdown.NOAA20,
-      b.platform_breakdown.NOAA21,
+      isNoData ? '' : b.platform_breakdown.TERRA,
+      isNoData ? '' : b.platform_breakdown.AQUA,
+      isNoData ? '' : b.platform_breakdown.SNPP,
+      isNoData ? '' : b.platform_breakdown.NOAA20,
+      isNoData ? '' : b.platform_breakdown.NOAA21,
       b.frp_summary.MODIS.sum_mw ?? '',
       b.frp_summary.MODIS.mean_mw ?? '',
-      b.frp_summary.MODIS.valid_count,
+      isNoData ? '' : b.frp_summary.MODIS.valid_count,
       b.frp_summary.VIIRS.sum_mw ?? '',
       b.frp_summary.VIIRS.mean_mw ?? '',
-      b.frp_summary.VIIRS.valid_count,
+      isNoData ? '' : b.frp_summary.VIIRS.valid_count,
       escapeCsvCell(b.seasonal_baseline?.MODIS.status_label ?? ''),
       escapeCsvCell(b.seasonal_baseline?.VIIRS.status_label ?? ''),
       escapeCsvCell(b.quality.coverage_note),
-      exp.modis,
-      exp.viirs,
+      isNoData ? '' : exp.modis,
+      isNoData ? '' : exp.viirs,
       modisPerSat,
       viirsPerSat,
+      isNoData ? '' : viirsPlatformDays,
+      isNoData ? '' : viirsEffCount,
+      viirsPerEff,
+      isNoData ? 'M2_UNAVAILABLE' : sc?.method_id ?? 'M2_GRID_DAILY_025_DEG',
+      isNoData ? '' : sc?.spatial_resolution ?? '0.25_deg_wgs84_grid',
+      isNoData ? '' : sc?.temporal_resolution ?? '1_utc_day',
+      modisCells,
+      viirsCells,
+      coDetectedCells,
+      modisOnlyCells,
+      viirsOnlyCells,
+      intersectionCount,
+      unionCount,
+      jaccardIdx,
+      modisCondRate,
+      viirsCondRate,
+      isNoData ? 'NO_SOURCE_DATA' : sc?.source_backing ?? analytics.data_mode,
       ...(h
         ? [
             m3Pt?.bridged_modis_equiv ?? '',

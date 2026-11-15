@@ -22,8 +22,11 @@ import {
   YoyYearSummary,
 } from '../types/firescope';
 import {
+  computeCrossSensorHarmonization,
   computeSeasonalBaseline,
+  computeSpatialConcordanceFromCounts,
   computeThresholds,
+  computeViirsPlatformNormalization,
   generateTimeBins,
   isPlatformAvailableInWindow,
   isPointInAoi,
@@ -31,6 +34,7 @@ import {
 import {
   computeBucketSpatialConcordance,
   computeHarmonizedSeries,
+  computePlatformExposure,
   getExpectedActivePlatforms,
 } from './harmonizationScience';
 
@@ -202,6 +206,13 @@ function assessBinWindowCoverage(
  */
 export function aggregateCalendarFromBuckets(params: {
   buckets: DailyAggregateBucket[];
+  dailyCellConcordance?: Array<{
+    acq_date: string;
+    active_cells: number;
+    co_located_cells: number;
+    modis_only_cells: number;
+    viirs_only_cells: number;
+  }>;
   historicalMonthTotals?: Array<{
     year: number;
     month: string; // '01'..'12'
@@ -224,6 +235,7 @@ export function aggregateCalendarFromBuckets(params: {
   archiveCoverageEnd: string;
   coveredDateWindows?: Array<{ startDate: string; endDate: string }>;
   dataMode: CalendarAnalyticsResponse['data_mode'];
+  dataBacking?: DataSourceBacking;
   demoNotice: string;
   sources: string[];
   retrievedAtUtc: string;
@@ -235,26 +247,28 @@ export function aggregateCalendarFromBuckets(params: {
 }): CalendarAnalyticsResponse {
   const {
     buckets,
+    dailyCellConcordance = [],
     historicalMonthTotals = [],
     aoi,
     startDate,
     endDate,
     granularity,
     sensor,
-    platforms,
-    processingStatus,
-    dayNight,
-    metric,
-    platformRegistry,
-    archiveCoverageStart,
-    archiveCoverageEnd,
+    platforms = ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus = 'ALL',
+    dayNight = 'ALL',
+    metric = 'detection_count',
+    platformRegistry = [],
+    archiveCoverageStart = '2001-01-01',
+    archiveCoverageEnd = '2026-11-15',
     coveredDateWindows,
     dataMode,
-    demoNotice,
-    sources,
+    dataBacking,
+    demoNotice = '',
+    sources = [],
     retrievedAtUtc,
-    latestAcquisitionUtc,
-    archiveChecksums,
+    latestAcquisitionUtc = retrievedAtUtc,
+    archiveChecksums = [],
     supersededNrtTotal = 0,
     duplicatesRemovedTotal = 0,
     enableExperimentalM3 = false,
@@ -491,6 +505,133 @@ export function aggregateCalendarFromBuckets(params: {
       }): observed partial month compared against full prior months. ${viirsBaseline.caveat_note}`;
     }
 
+    const binBucketsWithCoords = binBuckets.filter(
+      (b) => typeof b.lat_bin === 'number' && typeof b.lng_bin === 'number'
+    );
+    const hasBucketCoords = binBucketsWithCoords.length > 0;
+    const bucketCoLoc =
+      hasBucketCoords && dailyCellConcordance.length === 0
+        ? computeBucketSpatialConcordance(binBucketsWithCoords, 50, {
+            sourceBacking: dataBacking,
+            coverageState,
+          })
+        : hasBucketCoords
+        ? computeBucketSpatialConcordance(binBucketsWithCoords, 50, {
+            sourceBacking: dataBacking,
+            coverageState,
+          })
+        : null;
+
+    const binDailyCells = dailyCellConcordance.filter(
+      (c) => c.acq_date >= binStartDateStr && c.acq_date <= binEndDateStr
+    );
+    const dailyCellsWithCoordsSet = new Set(
+      binBucketsWithCoords.map((b) => b.acq_date)
+    );
+    let coLocatedCellsCount = bucketCoLoc?.co_detected_clusters ?? 0;
+    let modisOnlyCellsCount = bucketCoLoc?.modis_only_clusters ?? 0;
+    let viirsOnlyCellsCount = bucketCoLoc?.viirs_only_clusters ?? 0;
+    let unmergedDailyCellDays = 0;
+    for (const dc of binDailyCells) {
+      if (dailyCellsWithCoordsSet.has(dc.acq_date)) continue;
+      coLocatedCellsCount += dc.co_located_cells;
+      modisOnlyCellsCount += dc.modis_only_cells;
+      viirsOnlyCellsCount += dc.viirs_only_cells;
+      unmergedDailyCellDays += 1;
+    }
+
+    const isCoveredBin =
+      (coverageState as BinCoverageState) !== 'NO_SOURCE_DATA' &&
+      (coverageState as BinCoverageState) !== 'COVERAGE_UNKNOWN';
+    const binSpatialConcordance = isCoveredBin
+      ? {
+          ...computeSpatialConcordanceFromCounts({
+            coLocated: coLocatedCellsCount,
+            modisOnly: modisOnlyCellsCount,
+            viirsOnly: viirsOnlyCellsCount,
+            gridResolutionDeg: 0.25,
+          }),
+          coverage_state: coverageState,
+          source_backing: dataBacking,
+        }
+      : undefined;
+
+    const totalCellsInBin =
+      coLocatedCellsCount + modisOnlyCellsCount + viirsOnlyCellsCount;
+    const synthesizedGridCoLoc =
+      (!bucketCoLoc || unmergedDailyCellDays > 0) && isCoveredBin && totalCellsInBin > 0
+        ? {
+            method_id: 'M2_GRID_DAILY_025_DEG' as const,
+            method_name: '0.25° × 0.25° Daily Grid Cell Co-Occurrence (24h UTC)',
+            spatial_resolution:
+              '0.25° × 0.25° WGS84 grid cell (~27.8 km × 27.8 km at equator)',
+            temporal_resolution: '24h UTC calendar day',
+            spatial_threshold_km: 27.8,
+            temporal_threshold_hours: 24,
+            aggregation_method: 'FIXED_GRID_CELL_DAY_PARTITION',
+            eligible_observation_count: (modisCount ?? 0) + (viirsCount ?? 0),
+            modis_eligible_count: coLocatedCellsCount + modisOnlyCellsCount,
+            viirs_eligible_count: coLocatedCellsCount + viirsOnlyCellsCount,
+            intersection_count: coLocatedCellsCount,
+            union_count: totalCellsInBin,
+            jaccard_index: binSpatialConcordance?.jaccard_index ?? null,
+            modis_conditional_rate:
+              binSpatialConcordance?.modis_conditional_rate ?? null,
+            viirs_conditional_rate:
+              binSpatialConcordance?.viirs_conditional_rate ?? null,
+            spatial_concordance_pct:
+              binSpatialConcordance?.cell_concordance_pct ?? null,
+            modis_co_detection_pct:
+              binSpatialConcordance?.modis_cell_co_detected_pct ?? null,
+            viirs_co_detection_pct:
+              binSpatialConcordance?.viirs_cell_co_detected_pct ?? null,
+            coverage_state: coverageState,
+            source_backing: dataBacking ?? 'REAL_NASA_ARCHIVE_PARQUET',
+            note: 'M2_GRID_DAILY_025_DEG: Coarse 0.25° × 0.25° (~771 km² at equator) same-UTC-day cell co-occurrence index computed across 100% of daily archive buckets.',
+            evaluation_scope: 'FULL_BIN_GRID_BUCKETS' as const,
+            spatial_radius_km_rule:
+              '0.25° × 0.25° grid cell same-UTC-day concordance',
+            temporal_window_hours: 24,
+            total_observations: (modisCount ?? 0) + (viirsCount ?? 0),
+            modis_total_detections: modisCount ?? 0,
+            viirs_total_detections: viirsCount ?? 0,
+            total_clusters: totalCellsInBin,
+            co_detected_clusters: coLocatedCellsCount,
+            viirs_only_clusters: viirsOnlyCellsCount,
+            modis_only_clusters: modisOnlyCellsCount,
+            co_detected_modis_obs: 0,
+            co_detected_viirs_obs: 0,
+            empirical_co_detected_viirs_per_modis:
+              (modisCount ?? 0) > 0
+                ? Number(((viirsCount ?? 0) / (modisCount ?? 1)).toFixed(2))
+                : null,
+            co_detected_modis_frp_mw: modisFrp.sum_mw ?? 0,
+            co_detected_viirs_frp_mw: viirsFrp.sum_mw ?? 0,
+            clusters: bucketCoLoc?.clusters ?? [],
+          }
+        : undefined;
+
+    const binExposure = computePlatformExposure({
+      startUtc: bin.startUtc,
+      endUtc: bin.endUtc,
+      selectedPlatforms: platforms,
+      observedBreakdown: platformBreakdown,
+      platformRegistry,
+      coveredDateWindows,
+    });
+    const binViirsPerEff =
+      isCoveredBin &&
+      viirsCount !== null &&
+      binExposure.viirsEffectivePlatforms > 0
+        ? Number((viirsCount / binExposure.viirsEffectivePlatforms).toFixed(2))
+        : null;
+    const binModisPerEff =
+      isCoveredBin &&
+      modisCount !== null &&
+      binExposure.modisEffectivePlatforms > 0
+        ? Number((modisCount / binExposure.modisEffectivePlatforms).toFixed(2))
+        : null;
+
     return {
       bin_key: bin.binKey,
       label: bin.label,
@@ -498,6 +639,8 @@ export function aggregateCalendarFromBuckets(params: {
       time_bin_end_utc: bin.endUtc,
       granularity,
       coverage_state: coverageState,
+      source_backing: dataBacking,
+      spatial_concordance: binSpatialConcordance,
       values: {
         MODIS: modisCount,
         VIIRS: viirsCount,
@@ -515,6 +658,16 @@ export function aggregateCalendarFromBuckets(params: {
       pooled_observation_count: pooledCount,
       pooled_caveat:
         'Unweighted arithmetic sum of MODIS and VIIRS observation records. Not a normalized cross-sensor fire count or unique incident total.',
+      viirs_platform_days: isCoveredBin ? binExposure.viirsPlatformDays : undefined,
+      viirs_effective_platform_count: isCoveredBin
+        ? binExposure.viirsEffectivePlatforms
+        : undefined,
+      viirs_per_effective_platform: binViirsPerEff,
+      modis_platform_days: isCoveredBin ? binExposure.modisPlatformDays : undefined,
+      modis_effective_platform_count: isCoveredBin
+        ? binExposure.modisEffectivePlatforms
+        : undefined,
+      modis_per_effective_platform: binModisPerEff,
       quality: {
         coverage_note: coverageNote,
         active_platforms: activePlatforms,
@@ -526,11 +679,7 @@ export function aggregateCalendarFromBuckets(params: {
         MODIS: modisBaseline,
         VIIRS: viirsBaseline,
       },
-      co_location: binBuckets.some(
-        (b) => typeof b.lat_bin === 'number' && typeof b.lng_bin === 'number'
-      )
-        ? computeBucketSpatialConcordance(binBuckets, 50) ?? undefined
-        : undefined,
+      co_location: synthesizedGridCoLoc ?? bucketCoLoc ?? undefined,
     };
   });
 
@@ -601,8 +750,66 @@ export function aggregateCalendarFromBuckets(params: {
     (b) => b.acq_date >= startDate && b.acq_date <= endDate
   );
 
+  const thresholdsModis = computeThresholds(
+    series.map((s) =>
+      metric === 'frp_mw' ? s.frp_summary.MODIS.sum_mw : s.values.MODIS
+    )
+  );
+  const thresholdsViirs = computeThresholds(
+    series.map((s) =>
+      metric === 'frp_mw' ? s.frp_summary.VIIRS.sum_mw : s.values.VIIRS
+    )
+  );
+
+  const viirsNormalization = computeViirsPlatformNormalization({
+    series,
+    selectedPlatforms: platforms,
+    platformRegistry,
+    startDate,
+    endDate,
+    coveredDateWindows: coveredDateWindows?.map((w) => ({
+      start: w.startDate,
+      end: w.endDate,
+    })),
+  });
+
+  let totalCoLocatedCells = 0;
+  let totalModisOnlyCells = 0;
+  let totalViirsOnlyCells = 0;
+  for (const b of series) {
+    if (b.spatial_concordance) {
+      totalCoLocatedCells += b.spatial_concordance.co_located_cells_count;
+      totalModisOnlyCells += b.spatial_concordance.modis_only_cells_count;
+      totalViirsOnlyCells += b.spatial_concordance.viirs_only_cells_count;
+    }
+  }
+
+  const crossSensorHarmonization = computeCrossSensorHarmonization({
+    series,
+    thresholds: { MODIS: thresholdsModis, VIIRS: thresholdsViirs },
+    totalModis,
+    totalViirs,
+    granularity,
+    startDate,
+    endDate,
+    aoiName: aoi.name,
+    precomputedCellCounts: {
+      coLocated: totalCoLocatedCells,
+      modisOnly: totalModisOnlyCells,
+      viirsOnly: totalViirsOnlyCells,
+    },
+  });
+  if (dataBacking) {
+    crossSensorHarmonization.source_backing = dataBacking;
+    if (crossSensorHarmonization.spatial_concordance) {
+      crossSensorHarmonization.spatial_concordance.source_backing = dataBacking;
+    }
+  }
+
   return {
     data_mode: dataMode,
+    data_backing: dataBacking,
+    m3_production_status: 'M3_DISABLED',
     demo_notice: demoNotice,
     aoi: {
       id: aoi.id,
@@ -645,17 +852,11 @@ export function aggregateCalendarFromBuckets(params: {
       superseded_nrt_total: supersededNrtTotal,
       duplicates_removed_total: duplicatesRemovedTotal,
     },
+    cross_sensor_harmonization: crossSensorHarmonization,
+    viirs_platform_normalization: viirsNormalization,
     thresholds: {
-      MODIS: computeThresholds(
-        series.map((s) =>
-          metric === 'frp_mw' ? s.frp_summary.MODIS.sum_mw : s.values.MODIS
-        )
-      ),
-      VIIRS: computeThresholds(
-        series.map((s) =>
-          metric === 'frp_mw' ? s.frp_summary.VIIRS.sum_mw : s.values.VIIRS
-        )
-      ),
+      MODIS: thresholdsModis,
+      VIIRS: thresholdsViirs,
     },
     series,
     ...(enableExperimentalM3
@@ -682,27 +883,39 @@ function toPeriodBinValue(
   for (const st of ['STANDARD', 'NRT', 'RT', 'URT'] as ProcessingStatus[]) {
     if ((bin.processing_breakdown[st] ?? 0) > 0) statuses.push(st);
   }
-  const expected = getExpectedActivePlatforms(
+  const exposure = computePlatformExposure(
     bin.time_bin_start_utc,
     bin.time_bin_end_utc,
     selectedPlatforms,
     bin.platform_breakdown
   );
+  const modisRate =
+    bin.values.MODIS !== null && exposure.modis_platform_days > 0 && exposure.eligible_days > 0
+      ? Number(((bin.values.MODIS * exposure.eligible_days) / exposure.modis_platform_days).toFixed(2))
+      : bin.values.MODIS !== null && exposure.modis_active_platforms > 0
+        ? Number((bin.values.MODIS / exposure.modis_active_platforms).toFixed(2))
+        : null;
+  const viirsRate =
+    bin.values.VIIRS !== null && exposure.viirs_platform_days > 0 && exposure.eligible_days > 0
+      ? Number(((bin.values.VIIRS * exposure.eligible_days) / exposure.viirs_platform_days).toFixed(2))
+      : bin.values.VIIRS !== null && exposure.viirs_active_platforms > 0
+        ? Number((bin.values.VIIRS / exposure.viirs_active_platforms).toFixed(2))
+        : null;
+
   return {
     bin_key: bin.bin_key,
     label: bin.label,
     modis_detections: bin.values.MODIS,
     viirs_detections: bin.values.VIIRS,
-    modis_expected_satellites: expected.modis,
-    viirs_expected_satellites: expected.viirs,
-    modis_per_satellite:
-      bin.values.MODIS !== null && expected.modis > 0
-        ? Number((bin.values.MODIS / expected.modis).toFixed(1))
-        : null,
-    viirs_per_satellite:
-      bin.values.VIIRS !== null && expected.viirs > 0
-        ? Number((bin.values.VIIRS / expected.viirs).toFixed(1))
-        : null,
+    modis_expected_satellites: exposure.modis_active_platforms,
+    viirs_expected_satellites: exposure.viirs_active_platforms,
+    modis_effective_satellites: exposure.modis_effective_platform_count,
+    viirs_effective_satellites: exposure.viirs_effective_platform_count,
+    viirs_platform_days: exposure.viirs_platform_days,
+    eligible_days: exposure.eligible_days,
+    modis_per_satellite: modisRate,
+    viirs_per_satellite: viirsRate,
+    viirs_per_effective_satellite: viirsRate,
     modis_frp_sum_mw: bin.frp_summary.MODIS.sum_mw,
     modis_frp_mean_mw: bin.frp_summary.MODIS.mean_mw,
     viirs_frp_sum_mw: bin.frp_summary.VIIRS.sum_mw,
@@ -719,28 +932,34 @@ function sumPeriodPerSatellite(
   rawTotal: number,
   fallbackExpectedSats: number
 ): number | null {
-  let coveredBins = 0;
-  let rateSum = 0;
+  let totalEligibleDays = 0;
+  let totalPlatformDays = 0;
   for (const b of calendar.series) {
     const val = b.values[sensor];
-    if (val === null) continue;
-    const exp = getExpectedActivePlatforms(
+    if (
+      val === null ||
+      b.coverage_state === 'NO_SOURCE_DATA' ||
+      b.coverage_state === 'COVERAGE_UNKNOWN'
+    ) {
+      continue;
+    }
+    const exp = computePlatformExposure(
       b.time_bin_start_utc,
       b.time_bin_end_utc,
       calendar.query.platforms,
       b.platform_breakdown
     );
-    const k = sensor === 'MODIS' ? exp.modis : exp.viirs;
-    if (k > 0) {
-      coveredBins += 1;
-      rateSum += val / k;
+    const pDays = sensor === 'MODIS' ? exp.modis_platform_days : exp.viirs_platform_days;
+    if (pDays > 0 && exp.eligible_days > 0) {
+      totalEligibleDays += exp.eligible_days;
+      totalPlatformDays += pDays;
     }
   }
-  if (coveredBins > 0) {
-    return Number(rateSum.toFixed(1));
+  if (totalEligibleDays > 0 && totalPlatformDays > 0) {
+    return Number(((rawTotal * totalEligibleDays) / totalPlatformDays).toFixed(2));
   }
   if (fallbackExpectedSats > 0) {
-    return Number((rawTotal / fallbackExpectedSats).toFixed(1));
+    return Number((rawTotal / fallbackExpectedSats).toFixed(2));
   }
   return null;
 }
@@ -844,27 +1063,47 @@ export function buildPeriodComparisonResponse(params: {
   const pAViirs = periodA.totals.VIIRS_detections;
   const pBViirs = periodB.totals.VIIRS_detections;
 
-  const expPeriodA = getExpectedActivePlatforms(
+  const expPeriodA = computePlatformExposure(
     periodA.query.start_date,
     periodA.query.end_date,
     periodA.query.platforms,
     periodA.totals.platform_totals
   );
-  const expPeriodB = getExpectedActivePlatforms(
+  const expPeriodB = computePlatformExposure(
     periodB.query.start_date,
     periodB.query.end_date,
     periodB.query.platforms,
     periodB.totals.platform_totals
   );
 
-  const pAModisPerSat = sumPeriodPerSatellite(periodA, 'MODIS', pAModis, expPeriodA.modis);
-  const pBModisPerSat = sumPeriodPerSatellite(periodB, 'MODIS', pBModis, expPeriodB.modis);
-  const pAViirsPerSat = sumPeriodPerSatellite(periodA, 'VIIRS', pAViirs, expPeriodA.viirs);
-  const pBViirsPerSat = sumPeriodPerSatellite(periodB, 'VIIRS', pBViirs, expPeriodB.viirs);
+  const pAModisPerSat = sumPeriodPerSatellite(
+    periodA,
+    'MODIS',
+    pAModis,
+    expPeriodA.modis_effective_platform_count || expPeriodA.modis_active_platforms
+  );
+  const pBModisPerSat = sumPeriodPerSatellite(
+    periodB,
+    'MODIS',
+    pBModis,
+    expPeriodB.modis_effective_platform_count || expPeriodB.modis_active_platforms
+  );
+  const pAViirsPerSat = sumPeriodPerSatellite(
+    periodA,
+    'VIIRS',
+    pAViirs,
+    expPeriodA.viirs_effective_platform_count || expPeriodA.viirs_active_platforms
+  );
+  const pBViirsPerSat = sumPeriodPerSatellite(
+    periodB,
+    'VIIRS',
+    pBViirs,
+    expPeriodB.viirs_effective_platform_count || expPeriodB.viirs_active_platforms
+  );
 
   const modisPerSatDelta =
     pAModisPerSat !== null && pBModisPerSat !== null
-      ? Number((pBModisPerSat - pAModisPerSat).toFixed(1))
+      ? Number((pBModisPerSat - pAModisPerSat).toFixed(2))
       : null;
   const modisPerSatPct =
     pAModisPerSat !== null && pAModisPerSat > 0 && pBModisPerSat !== null
@@ -873,7 +1112,7 @@ export function buildPeriodComparisonResponse(params: {
 
   const viirsPerSatDelta =
     pAViirsPerSat !== null && pBViirsPerSat !== null
-      ? Number((pBViirsPerSat - pAViirsPerSat).toFixed(1))
+      ? Number((pBViirsPerSat - pAViirsPerSat).toFixed(2))
       : null;
   const viirsPerSatPct =
     pAViirsPerSat !== null && pAViirsPerSat > 0 && pBViirsPerSat !== null
@@ -881,25 +1120,35 @@ export function buildPeriodComparisonResponse(params: {
       : null;
 
   const enrichedYoySummary: YoyYearSummary[] = yoySummary.map((yr) => {
-    const hasModisRate = typeof yr.modis_per_satellite === 'number';
-    const hasViirsRate = typeof yr.viirs_per_satellite === 'number';
-    if (hasModisRate && hasViirsRate) return yr;
-    const exp = getExpectedActivePlatforms(
+    const exp = computePlatformExposure(
       yr.start_date,
       yr.end_date,
       periodB.query.platforms,
       undefined
     );
+    const modisRate =
+      exp.modis_platform_days > 0 && exp.eligible_days > 0
+        ? Number(((yr.modis_detections * exp.eligible_days) / exp.modis_platform_days).toFixed(2))
+        : exp.modis_active_platforms > 0
+          ? Number((yr.modis_detections / exp.modis_active_platforms).toFixed(2))
+          : 0;
+    const viirsRate =
+      exp.viirs_platform_days > 0 && exp.eligible_days > 0
+        ? Number(((yr.viirs_detections * exp.eligible_days) / exp.viirs_platform_days).toFixed(2))
+        : exp.viirs_active_platforms > 0
+          ? Number((yr.viirs_detections / exp.viirs_active_platforms).toFixed(2))
+          : 0;
     return {
       ...yr,
-      modis_expected_satellites: yr.modis_expected_satellites ?? exp.modis,
-      viirs_expected_satellites: yr.viirs_expected_satellites ?? exp.viirs,
-      modis_per_satellite:
-        yr.modis_per_satellite ??
-        (exp.modis > 0 ? Number((yr.modis_detections / exp.modis).toFixed(1)) : 0),
-      viirs_per_satellite:
-        yr.viirs_per_satellite ??
-        (exp.viirs > 0 ? Number((yr.viirs_detections / exp.viirs).toFixed(1)) : 0),
+      modis_expected_satellites: yr.modis_expected_satellites ?? exp.modis_active_platforms,
+      viirs_expected_satellites: yr.viirs_expected_satellites ?? exp.viirs_active_platforms,
+      modis_effective_satellites: exp.modis_effective_platform_count,
+      viirs_effective_satellites: exp.viirs_effective_platform_count,
+      viirs_platform_days: exp.viirs_platform_days,
+      eligible_days: exp.eligible_days,
+      modis_per_satellite: modisRate,
+      viirs_per_satellite: viirsRate,
+      viirs_per_effective_satellite: viirsRate,
     };
   });
 
@@ -964,16 +1213,26 @@ export function buildPeriodComparisonResponse(params: {
       viirs_delta: pBViirs - pAViirs,
       viirs_pct_change:
         pAViirs > 0 ? Number((((pBViirs - pAViirs) / pAViirs) * 100).toFixed(1)) : null,
-      period_a_modis_satellites: expPeriodA.modis,
-      period_b_modis_satellites: expPeriodB.modis,
+      period_a_modis_satellites: expPeriodA.modis_active_platforms,
+      period_b_modis_satellites: expPeriodB.modis_active_platforms,
+      period_a_modis_effective_satellites: expPeriodA.modis_effective_platform_count,
+      period_b_modis_effective_satellites: expPeriodB.modis_effective_platform_count,
       period_a_modis_per_satellite: pAModisPerSat,
       period_b_modis_per_satellite: pBModisPerSat,
       modis_per_satellite_delta: modisPerSatDelta,
       modis_per_satellite_pct_change: modisPerSatPct,
-      period_a_viirs_satellites: expPeriodA.viirs,
-      period_b_viirs_satellites: expPeriodB.viirs,
+      period_a_viirs_satellites: expPeriodA.viirs_active_platforms,
+      period_b_viirs_satellites: expPeriodB.viirs_active_platforms,
+      period_a_viirs_effective_satellites: expPeriodA.viirs_effective_platform_count,
+      period_b_viirs_effective_satellites: expPeriodB.viirs_effective_platform_count,
+      period_a_viirs_platform_days: expPeriodA.viirs_platform_days,
+      period_b_viirs_platform_days: expPeriodB.viirs_platform_days,
+      period_a_eligible_days: expPeriodA.eligible_days,
+      period_b_eligible_days: expPeriodB.eligible_days,
       period_a_viirs_per_satellite: pAViirsPerSat,
       period_b_viirs_per_satellite: pBViirsPerSat,
+      period_a_viirs_per_effective_satellite: pAViirsPerSat,
+      period_b_viirs_per_effective_satellite: pBViirsPerSat,
       viirs_per_satellite_delta: viirsPerSatDelta,
       viirs_per_satellite_pct_change: viirsPerSatPct,
       period_a_modis_frp_mean_mw: periodA.totals.MODIS_frp.mean_mw,
@@ -1069,15 +1328,34 @@ export function buildAoiComparisonResponse(params: {
     );
   }
 
+  const areaKA = Math.max(0.01, aoiA.areaSqKm / 1000);
+  const areaKB = Math.max(0.01, aoiB.areaSqKm / 1000);
+
   const alignedSeries = analyticsA.series.map((bA, idx) => {
     const bB = analyticsB.series[idx];
+    const aModis = bA.values.MODIS;
+    const aViirs = bA.values.VIIRS;
+    const bModis = bB?.values.MODIS ?? null;
+    const bViirs = bB?.values.VIIRS ?? null;
     return {
       bin_key: bA.bin_key,
       label: bA.label,
-      aoi_a_modis: bA.values.MODIS,
-      aoi_a_viirs: bA.values.VIIRS,
-      aoi_b_modis: bB?.values.MODIS ?? null,
-      aoi_b_viirs: bB?.values.VIIRS ?? null,
+      aoi_a_modis: aModis,
+      aoi_a_viirs: aViirs,
+      aoi_b_modis: bModis,
+      aoi_b_viirs: bViirs,
+      aoi_a_modis_density_per_1000_km2:
+        aModis !== null ? Number((aModis / areaKA).toFixed(4)) : null,
+      aoi_a_viirs_density_per_1000_km2:
+        aViirs !== null ? Number((aViirs / areaKA).toFixed(4)) : null,
+      aoi_b_modis_density_per_1000_km2:
+        bModis !== null ? Number((bModis / areaKB).toFixed(4)) : null,
+      aoi_b_viirs_density_per_1000_km2:
+        bViirs !== null ? Number((bViirs / areaKB).toFixed(4)) : null,
+      aoi_a_modis_frp_sum_mw: bA.frp_summary.MODIS.sum_mw,
+      aoi_a_viirs_frp_sum_mw: bA.frp_summary.VIIRS.sum_mw,
+      aoi_b_modis_frp_sum_mw: bB?.frp_summary.MODIS.sum_mw ?? null,
+      aoi_b_viirs_frp_sum_mw: bB?.frp_summary.VIIRS.sum_mw ?? null,
     };
   });
 
@@ -1279,6 +1557,10 @@ export function generatePeriodComparisonCsv(comp: PeriodComparisonResponse): str
     'period_b_viirs_frp_mean_mw',
     'period_a_platforms',
     'period_b_platforms',
+    'period_a_viirs_effective_sats',
+    'period_b_viirs_effective_sats',
+    'period_a_viirs_platform_days',
+    'period_b_viirs_platform_days',
     'period_a_modis_per_sat',
     'period_b_modis_per_sat',
     'modis_per_sat_delta',
@@ -1304,6 +1586,10 @@ export function generatePeriodComparisonCsv(comp: PeriodComparisonResponse): str
     r.period_b?.viirs_frp_mean_mw ?? '',
     escapeCsvCell((r.period_a?.active_platforms ?? []).join(';')),
     escapeCsvCell((r.period_b?.active_platforms ?? []).join(';')),
+    r.period_a?.viirs_effective_satellites ?? '',
+    r.period_b?.viirs_effective_satellites ?? '',
+    r.period_a?.viirs_platform_days ?? '',
+    r.period_b?.viirs_platform_days ?? '',
     r.period_a?.modis_per_satellite ?? '',
     r.period_b?.modis_per_satellite ?? '',
     r.modis_per_satellite_delta ?? '',
@@ -1319,12 +1605,18 @@ export function generatePeriodComparisonCsv(comp: PeriodComparisonResponse): str
  * Generates CSV export with definitions & SHA-256 provenance for Multi-AOI Side-by-Side Comparison.
  */
 export function generateAoiComparisonCsv(comp: AoiComparisonResponse): string {
+  const areaKA = Math.max(0.01, comp.aoi_a.aoi.area_sq_km / 1000);
+  const areaKB = Math.max(0.01, comp.aoi_b.aoi.area_sq_km / 1000);
+
   const headerComments = [
     `# FireScope Multi-AOI Side-by-Side Comparison Export`,
     `# AOI A: ${comp.aoi_a.aoi.name} (${comp.aoi_a.aoi.id}) | Area Extent: ${comp.aoi_a.aoi.area_sq_km} km2 | Backing: ${comp.aoi_a.data_backing}`,
+    `# AOI A Summary Totals: MODIS=${comp.aoi_a.modis_detections} (${comp.aoi_a.modis_per_1000_sq_km} per 1,000 km2), VIIRS=${comp.aoi_a.viirs_detections} (${comp.aoi_a.viirs_per_1000_sq_km} per 1,000 km2)`,
     `# AOI B: ${comp.aoi_b.aoi.name} (${comp.aoi_b.aoi.id}) | Area Extent: ${comp.aoi_b.aoi.area_sq_km} km2 | Backing: ${comp.aoi_b.data_backing}`,
+    `# AOI B Summary Totals: MODIS=${comp.aoi_b.modis_detections} (${comp.aoi_b.modis_per_1000_sq_km} per 1,000 km2), VIIRS=${comp.aoi_b.viirs_detections} (${comp.aoi_b.viirs_per_1000_sq_km} per 1,000 km2)`,
     `# Time Window (UTC): ${comp.query.start_date} to ${comp.query.end_date} | Granularity: ${comp.query.granularity} | Sensor Mode: ${comp.query.sensor}`,
-    `# Method: ${comp.method.id} v${comp.method.version} | Caveat: ${comp.method.caveat}`,
+    `# Method: ${comp.method.id} v${comp.method.version} | Density Formula: density_per_1000_km2 = N_s(A, t) / (area_sq_km(A) / 1000)`,
+    `# Caveat: ${comp.method.caveat}`,
     `# Sources: ${comp.provenance.sources.join('; ')}`,
     `# Retrieved At (UTC): ${comp.provenance.retrieved_at_utc}`,
     `# SHA-256 Checksums: ${comp.provenance.archive_checksums.join(', ')}`,
@@ -1333,20 +1625,71 @@ export function generateAoiComparisonCsv(comp: AoiComparisonResponse): string {
   const columns = [
     'bin_key',
     'label',
+    'aoi_a_area_sq_km',
+    'aoi_b_area_sq_km',
     'aoi_a_modis_detections',
     'aoi_a_viirs_detections',
+    'aoi_a_modis_density_per_1000_km2',
+    'aoi_a_viirs_density_per_1000_km2',
     'aoi_b_modis_detections',
     'aoi_b_viirs_detections',
+    'aoi_b_modis_density_per_1000_km2',
+    'aoi_b_viirs_density_per_1000_km2',
+    'aoi_a_modis_frp_sum_mw',
+    'aoi_a_viirs_frp_sum_mw',
+    'aoi_b_modis_frp_sum_mw',
+    'aoi_b_viirs_frp_sum_mw',
+    'source_backing_a',
+    'source_backing_b',
   ];
 
-  const rows = comp.aligned_series.map((r) => [
-    r.bin_key,
-    escapeCsvCell(r.label),
-    r.aoi_a_modis ?? '',
-    r.aoi_a_viirs ?? '',
-    r.aoi_b_modis ?? '',
-    r.aoi_b_viirs ?? '',
-  ]);
+  const rows = comp.aligned_series.map((r) => {
+    const aModisDens =
+      r.aoi_a_modis_density_per_1000_km2 !== undefined
+        ? r.aoi_a_modis_density_per_1000_km2
+        : r.aoi_a_modis !== null
+          ? Number((r.aoi_a_modis / areaKA).toFixed(4))
+          : null;
+    const aViirsDens =
+      r.aoi_a_viirs_density_per_1000_km2 !== undefined
+        ? r.aoi_a_viirs_density_per_1000_km2
+        : r.aoi_a_viirs !== null
+          ? Number((r.aoi_a_viirs / areaKA).toFixed(4))
+          : null;
+    const bModisDens =
+      r.aoi_b_modis_density_per_1000_km2 !== undefined
+        ? r.aoi_b_modis_density_per_1000_km2
+        : r.aoi_b_modis !== null
+          ? Number((r.aoi_b_modis / areaKB).toFixed(4))
+          : null;
+    const bViirsDens =
+      r.aoi_b_viirs_density_per_1000_km2 !== undefined
+        ? r.aoi_b_viirs_density_per_1000_km2
+        : r.aoi_b_viirs !== null
+          ? Number((r.aoi_b_viirs / areaKB).toFixed(4))
+          : null;
+
+    return [
+      r.bin_key,
+      escapeCsvCell(r.label),
+      comp.aoi_a.aoi.area_sq_km,
+      comp.aoi_b.aoi.area_sq_km,
+      r.aoi_a_modis ?? '',
+      r.aoi_a_viirs ?? '',
+      aModisDens ?? '',
+      aViirsDens ?? '',
+      r.aoi_b_modis ?? '',
+      r.aoi_b_viirs ?? '',
+      bModisDens ?? '',
+      bViirsDens ?? '',
+      r.aoi_a_modis_frp_sum_mw ?? '',
+      r.aoi_a_viirs_frp_sum_mw ?? '',
+      r.aoi_b_modis_frp_sum_mw ?? '',
+      r.aoi_b_viirs_frp_sum_mw ?? '',
+      comp.aoi_a.data_backing,
+      comp.aoi_b.data_backing,
+    ];
+  });
 
   return [...headerComments, columns.join(','), ...rows.map((r) => r.join(','))].join('\n');
 }

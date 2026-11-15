@@ -1,21 +1,460 @@
 import {
   AoiDefinition,
   BinCoverageState,
+  BinSpatialConcordance,
   BoundingBox,
   CalendarAnalyticsResponse,
   CalendarBinRecord,
   CanonicalObservation,
+  CrossSensorHarmonizationSummary,
   FrpSummaryStats,
+  GatedMethodLevelId,
   GeoPoint,
   Granularity,
+  MethodLevelId,
   PlatformId,
   PlatformRegistryEntry,
   ProcessingStatus,
   SeasonalBaselineComparison,
   SensorFilter,
   SensorId,
+  ViirsPlatformNormalizationSummary,
 } from '../types/firescope';
-import { computeHarmonizedSeries } from './harmonizationScience';
+import { computeHarmonizedSeries, computePlatformExposure } from './harmonizationScience';
+
+export const PRODUCTION_ALLOWED_METHODS: readonly MethodLevelId[] = [
+  'M0_RAW',
+  'M1_AGGREGATED',
+  'M2_COMPARATIVE',
+] as const;
+
+export const GATED_EXPERIMENTAL_METHODS: readonly GatedMethodLevelId[] = [
+  'M3_CALIBRATED',
+  'M3_EMPIRICAL_PLATFORM_BRIDGE',
+  'M4_BIAS_AWARE',
+] as const;
+
+/**
+ * Verifies whether a scientific method level is approved for production analytical output.
+ * M3 (Empirical Platform Bridge / Calibrated MODIS-equivalent) and M4 (Bias-Aware) are gated
+ * in production per AGENTS.md and docs/TECHNICAL_RESEARCH.md.
+ */
+export function isMethodLevelAllowedInProduction(
+  methodId: string
+): methodId is MethodLevelId {
+  return (PRODUCTION_ALLOWED_METHODS as readonly string[]).includes(methodId);
+}
+
+/**
+ * Hard production gate preventing M3/M4 experimental cross-sensor calibration or
+ * observation-probability correction from running in production.
+ */
+export function assertProductionMethodGate(methodId: string): asserts methodId is MethodLevelId {
+  if (!isMethodLevelAllowedInProduction(methodId)) {
+    throw new Error(
+      `Scientific Production Gate Violation: Method "${methodId}" is disabled in production. ` +
+        `Only M0_RAW, M1_AGGREGATED, and M2_COMPARATIVE native sensor outputs are approved. ` +
+        `M3/M4 cross-sensor scaling and MODIS-equivalent calibration are strictly prohibited without integrator sign-off.`
+    );
+  }
+}
+
+export { computeHarmonizedSeries };
+
+
+/**
+ * Computes 0.25° × 0.25° spatial cell co-location counts, Jaccard index, and conditional
+ * co-detection rates from pre-aggregated cell counts.
+ */
+export function computeSpatialConcordanceFromCounts(
+  paramsOrCoLocated:
+    | {
+        coLocated?: number;
+        modisOnly?: number;
+        viirsOnly?: number;
+        coLocatedCells?: number;
+        modisOnlyCells?: number;
+        viirsOnlyCells?: number;
+        gridResolutionDeg?: number;
+      }
+    | number,
+  modisOnlyArg?: number,
+  viirsOnlyArg?: number,
+  gridResArg = 0.25
+): BinSpatialConcordance {
+  const coLocatedRaw =
+    typeof paramsOrCoLocated === 'number'
+      ? paramsOrCoLocated
+      : paramsOrCoLocated.coLocated ?? paramsOrCoLocated.coLocatedCells ?? 0;
+  const modisOnlyRaw =
+    typeof paramsOrCoLocated === 'number'
+      ? modisOnlyArg ?? 0
+      : paramsOrCoLocated.modisOnly ?? paramsOrCoLocated.modisOnlyCells ?? 0;
+  const viirsOnlyRaw =
+    typeof paramsOrCoLocated === 'number'
+      ? viirsOnlyArg ?? 0
+      : paramsOrCoLocated.viirsOnly ?? paramsOrCoLocated.viirsOnlyCells ?? 0;
+  const gridResolutionDeg =
+    typeof paramsOrCoLocated === 'number'
+      ? gridResArg
+      : paramsOrCoLocated.gridResolutionDeg ?? 0.25;
+
+  const coLocatedCellsCount = Math.max(0, Math.trunc(coLocatedRaw));
+  const modisOnlyCellsCount = Math.max(0, Math.trunc(modisOnlyRaw));
+  const viirsOnlyCellsCount = Math.max(0, Math.trunc(viirsOnlyRaw));
+  const activeCellsTotal =
+    coLocatedCellsCount + modisOnlyCellsCount + viirsOnlyCellsCount;
+  const modisCellsTotal = coLocatedCellsCount + modisOnlyCellsCount;
+  const viirsCellsTotal = coLocatedCellsCount + viirsOnlyCellsCount;
+
+  const spatialPct =
+    activeCellsTotal > 0
+      ? Number(((coLocatedCellsCount / activeCellsTotal) * 100).toFixed(2))
+      : null;
+  const jaccardIdx =
+    activeCellsTotal > 0
+      ? Number((coLocatedCellsCount / activeCellsTotal).toFixed(4))
+      : null;
+  const modisPct =
+    modisCellsTotal > 0
+      ? Number(((coLocatedCellsCount / modisCellsTotal) * 100).toFixed(2))
+      : null;
+  const viirsPct =
+    viirsCellsTotal > 0
+      ? Number(((coLocatedCellsCount / viirsCellsTotal) * 100).toFixed(2))
+      : null;
+
+  const modisCondRate =
+    modisCellsTotal > 0
+      ? Number((coLocatedCellsCount / modisCellsTotal).toFixed(4))
+      : null;
+  const viirsCondRate =
+    viirsCellsTotal > 0
+      ? Number((coLocatedCellsCount / viirsCellsTotal).toFixed(4))
+      : null;
+
+  return {
+    method_id: 'M2_GRID_DAILY_025_DEG',
+    m2_method_id: 'M2_GRID_DAILY_025_DEG',
+    method_name: '0.25° × 0.25° Daily Grid Cell Co-Occurrence (24h UTC)',
+    spatial_resolution: `${gridResolutionDeg}° × ${gridResolutionDeg}° WGS84 grid cell (~27.8 km × 27.8 km at equator)`,
+    temporal_resolution: '24h UTC calendar day',
+    spatial_threshold_km: Number((gridResolutionDeg * 111.32).toFixed(1)),
+    temporal_threshold_hours: 24,
+    aggregation_method: 'FIXED_GRID_CELL_DAY_PARTITION',
+    grid_resolution_deg: gridResolutionDeg,
+    active_cells_total: activeCellsTotal,
+    total_active_cells: activeCellsTotal,
+    co_located_cells_count: coLocatedCellsCount,
+    co_located_cells: coLocatedCellsCount,
+    modis_only_cells_count: modisOnlyCellsCount,
+    modis_only_cells: modisOnlyCellsCount,
+    viirs_only_cells_count: viirsOnlyCellsCount,
+    viirs_only_cells: viirsOnlyCellsCount,
+    modis_eligible_cells_count: modisCellsTotal,
+    modis_eligible_count: modisCellsTotal,
+    viirs_eligible_cells_count: viirsCellsTotal,
+    viirs_eligible_count: viirsCellsTotal,
+    intersection_count: coLocatedCellsCount,
+    union_count: activeCellsTotal,
+    spatial_co_located_cells_pct: spatialPct,
+    spatial_concordance_pct: spatialPct,
+    cell_concordance_pct: spatialPct,
+    jaccard_index: jaccardIdx,
+    modis_cell_co_detection_pct: modisPct,
+    modis_cell_co_detected_pct: modisPct,
+    modis_co_detected_by_viirs_pct: modisPct,
+    modis_conditional_rate: modisCondRate,
+    viirs_cell_co_detection_pct: viirsPct,
+    viirs_cell_co_detected_pct: viirsPct,
+    viirs_co_detected_by_modis_pct: viirsPct,
+    viirs_conditional_rate: viirsCondRate,
+  };
+}
+
+/**
+ * Computes 0.25° × 0.25° spatial cell co-location counts and percentage from cell sensor flags
+ * or from two sets of MODIS and VIIRS cell keys.
+ */
+export function computeSpatialConcordanceFromCells(
+  cellSensorFlagsOrModisSet:
+    | Array<{ modis: boolean; viirs: boolean }>
+    | Set<string>,
+  viirsSet?: Set<string>,
+  gridResolutionDeg = 0.25
+): BinSpatialConcordance {
+  if (cellSensorFlagsOrModisSet instanceof Set) {
+    const modisCells = cellSensorFlagsOrModisSet;
+    const viirsCells = viirsSet ?? new Set<string>();
+    let coLocated = 0;
+    let modisOnly = 0;
+    for (const mKey of modisCells) {
+      if (viirsCells.has(mKey)) {
+        coLocated += 1;
+      } else {
+        modisOnly += 1;
+      }
+    }
+    let viirsOnly = 0;
+    for (const vKey of viirsCells) {
+      if (!modisCells.has(vKey)) {
+        viirsOnly += 1;
+      }
+    }
+    return computeSpatialConcordanceFromCounts({
+      coLocated,
+      modisOnly,
+      viirsOnly,
+      gridResolutionDeg,
+    });
+  }
+
+  let coLocatedCellsCount = 0;
+  let modisOnlyCellsCount = 0;
+  let viirsOnlyCellsCount = 0;
+
+  for (const c of cellSensorFlagsOrModisSet) {
+    if (!c.modis && !c.viirs) continue;
+    if (c.modis && c.viirs) {
+      coLocatedCellsCount += 1;
+    } else if (c.modis) {
+      modisOnlyCellsCount += 1;
+    } else if (c.viirs) {
+      viirsOnlyCellsCount += 1;
+    }
+  }
+
+  return computeSpatialConcordanceFromCounts({
+    coLocated: coLocatedCellsCount,
+    modisOnly: modisOnlyCellsCount,
+    viirsOnly: viirsOnlyCellsCount,
+    gridResolutionDeg,
+  });
+}
+
+/**
+ * Computes M2 descriptive VIIRS Platform-Normalized Observation Rate (R_VIIRS = V / k_eff_VIIRS)
+ * across a series of UTC time bins, excluding NO_SOURCE_DATA / COVERAGE_UNKNOWN bins from denominators.
+ */
+export function computeViirsPlatformNormalization(
+  seriesOrParams:
+    | CalendarBinRecord[]
+    | {
+        series: CalendarBinRecord[];
+        selectedPlatforms?: PlatformId[];
+        platformRegistry?: PlatformRegistryEntry[];
+        startDate?: string;
+        endDate?: string;
+        coveredDateWindows?: Array<{ start: string; end: string }>;
+      }
+): ViirsPlatformNormalizationSummary {
+  const series = Array.isArray(seriesOrParams)
+    ? seriesOrParams
+    : seriesOrParams.series;
+  const fallbackSelectedPlatforms = Array.isArray(seriesOrParams)
+    ? undefined
+    : seriesOrParams.selectedPlatforms;
+  const fallbackRegistry = Array.isArray(seriesOrParams)
+    ? undefined
+    : seriesOrParams.platformRegistry;
+  const coveredDateWindows = Array.isArray(seriesOrParams)
+    ? undefined
+    : seriesOrParams.coveredDateWindows;
+
+  const perPlatformCounts = { SNPP: 0, NOAA20: 0, NOAA21: 0 };
+  const perPlatformCoveredBins = { SNPP: 0, NOAA20: 0, NOAA21: 0 };
+  const perPlatformCoveredDays = { SNPP: 0, NOAA20: 0, NOAA21: 0 };
+  const availableViirsSet = new Set<'SNPP' | 'NOAA20' | 'NOAA21'>();
+
+  let coveredBinsTotal = 0;
+  let sumKViirs = 0;
+  let totalEligibleDays = 0;
+  let totalViirsPlatformDays = 0;
+  let totalViirsDetections = 0;
+
+  for (const bin of series) {
+    bin.m3_status = 'M3_DISABLED';
+    const isCovered =
+      bin.coverage_state !== 'NO_SOURCE_DATA' &&
+      bin.coverage_state !== 'COVERAGE_UNKNOWN';
+
+    const binStart = bin.time_bin_start_utc?.slice(0, 10) ?? '2020-01-01';
+    const binEnd = bin.time_bin_end_utc?.slice(0, 10) ?? binStart;
+
+    let activeViirsPlats: Array<'SNPP' | 'NOAA20' | 'NOAA21'> = [];
+    if (isCovered) {
+      if (bin.quality?.active_platforms && bin.quality.active_platforms.length > 0) {
+        activeViirsPlats = bin.quality.active_platforms.filter(
+          (p): p is 'SNPP' | 'NOAA20' | 'NOAA21' =>
+            p === 'SNPP' || p === 'NOAA20' || p === 'NOAA21'
+        );
+      } else if (fallbackSelectedPlatforms) {
+        const candidateViirs = fallbackSelectedPlatforms.filter(
+          (p): p is 'SNPP' | 'NOAA20' | 'NOAA21' =>
+            p === 'SNPP' || p === 'NOAA20' || p === 'NOAA21'
+        );
+        if (fallbackRegistry && fallbackRegistry.length > 0) {
+          const canonicalFirstDate: Record<'SNPP' | 'NOAA20' | 'NOAA21', string> = {
+            SNPP: '2012-01-20',
+            NOAA20: '2018-04-01',
+            NOAA21: '2023-03-01',
+          };
+          activeViirsPlats = candidateViirs.filter((p) => {
+            const reg = fallbackRegistry.find((r) => r.platform_id === p);
+            const firstDate = reg?.first_observation_date ?? canonicalFirstDate[p];
+            const lastDate = reg?.last_observation_date ?? '2099-12-31';
+            return binEnd >= firstDate && binStart <= lastDate;
+          });
+        } else {
+          activeViirsPlats = candidateViirs;
+        }
+      }
+    }
+
+    const exposure = isCovered
+      ? computePlatformExposure(
+          binStart,
+          binEnd,
+          activeViirsPlats.length > 0
+            ? activeViirsPlats
+            : fallbackSelectedPlatforms,
+          bin.platform_breakdown,
+          coveredDateWindows
+        )
+      : {
+          modis_active_platforms: 0,
+          viirs_active_platforms: 0,
+          eligible_days: 0,
+          modis_platform_days: 0,
+          viirs_platform_days: 0,
+          modis_effective_platform_count: 0,
+          viirs_effective_platform_count: 0,
+          per_platform_covered_days: {
+            TERRA: 0,
+            AQUA: 0,
+            SNPP: 0,
+            NOAA20: 0,
+            NOAA21: 0,
+          },
+        };
+
+    const kViirs =
+      activeViirsPlats.length > 0
+        ? activeViirsPlats.length
+        : isCovered && typeof bin.k_viirs_active === 'number' && bin.k_viirs_active > 0
+          ? bin.k_viirs_active
+          : exposure.viirs_active_platforms;
+    bin.k_viirs_active = kViirs;
+    bin.eligible_days = exposure.eligible_days;
+    bin.viirs_platform_days = exposure.viirs_platform_days;
+    bin.viirs_effective_platform_count =
+      exposure.eligible_days > 0 && exposure.viirs_platform_days > 0
+        ? exposure.viirs_effective_platform_count
+        : kViirs > 0
+          ? kViirs
+          : null;
+
+    if (!isCovered || bin.values?.VIIRS === null || kViirs === 0) {
+      bin.viirs_per_platform = null;
+      bin.viirs_per_effective_platform = null;
+      continue;
+    }
+
+    coveredBinsTotal += 1;
+    sumKViirs += kViirs;
+    totalEligibleDays += exposure.eligible_days;
+    totalViirsPlatformDays += exposure.viirs_platform_days;
+    perPlatformCoveredDays.SNPP += exposure.per_platform_covered_days.SNPP;
+    perPlatformCoveredDays.NOAA20 += exposure.per_platform_covered_days.NOAA20;
+    perPlatformCoveredDays.NOAA21 += exposure.per_platform_covered_days.NOAA21;
+
+    const vCount = bin.values?.VIIRS ?? 0;
+    totalViirsDetections += vCount;
+    const binEffRate =
+      exposure.eligible_days > 0 && exposure.viirs_platform_days > 0
+        ? Number(((vCount * exposure.eligible_days) / exposure.viirs_platform_days).toFixed(2))
+        : Number((vCount / kViirs).toFixed(2));
+    bin.viirs_per_platform = binEffRate;
+    bin.viirs_per_effective_platform = binEffRate;
+
+    for (const p of activeViirsPlats) {
+      availableViirsSet.add(p);
+      perPlatformCoveredBins[p] += 1;
+    }
+    if (bin.platform_breakdown) {
+      perPlatformCounts.SNPP += bin.platform_breakdown.SNPP ?? 0;
+      perPlatformCounts.NOAA20 += bin.platform_breakdown.NOAA20 ?? 0;
+      perPlatformCounts.NOAA21 += bin.platform_breakdown.NOAA21 ?? 0;
+    }
+  }
+
+  const requestedBinsTotal = series.length;
+  const effectiveKViirs =
+    totalEligibleDays > 0 && totalViirsPlatformDays > 0
+      ? Number((totalViirsPlatformDays / totalEligibleDays).toFixed(2))
+      : coveredBinsTotal > 0 && sumKViirs > 0
+        ? Number((sumKViirs / coveredBinsTotal).toFixed(2))
+        : null;
+
+  const viirsPerActivePlatform =
+    totalEligibleDays > 0 && totalViirsPlatformDays > 0
+      ? Number(((totalViirsDetections * totalEligibleDays) / totalViirsPlatformDays).toFixed(2))
+      : effectiveKViirs !== null && effectiveKViirs > 0
+        ? Number((totalViirsDetections / effectiveKViirs).toFixed(2))
+        : null;
+
+  const viirsPerPlatformBin =
+    sumKViirs > 0 ? Number((totalViirsDetections / sumKViirs).toFixed(2)) : null;
+
+  const coverageCompletenessPct =
+    requestedBinsTotal > 0
+      ? Math.round((coveredBinsTotal / requestedBinsTotal) * 100)
+      : null;
+
+  const availableViirsList = Array.from(availableViirsSet);
+  const integerExpectedViirs = availableViirsList.length;
+  const integerNormalizedRate =
+    integerExpectedViirs > 0
+      ? Number((totalViirsDetections / integerExpectedViirs).toFixed(2))
+      : null;
+  const formulaStr =
+    'R_VIIRS,eff = V / k_eff, where k_eff = (sum_p d_p) / D across covered platform-days d_p and eligible days D';
+
+  return {
+    method_id: 'M2_COMPARATIVE',
+    normalization_formula: formulaStr,
+    formula: formulaStr,
+    total_viirs_detections: totalViirsDetections,
+    raw_viirs_total: totalViirsDetections,
+    raw_viirs_detections: totalViirsDetections,
+    available_viirs_platforms: availableViirsList,
+    active_viirs_platforms: availableViirsList,
+    per_platform_counts: perPlatformCounts,
+    per_platform_covered_bins: perPlatformCoveredBins,
+    per_platform_covered_days: perPlatformCoveredDays,
+    covered_bins_total: coveredBinsTotal,
+    requested_bins_total: requestedBinsTotal,
+    window_days: totalEligibleDays,
+    eligible_days: totalEligibleDays,
+    viirs_platform_days: totalViirsPlatformDays,
+    effective_k_viirs: effectiveKViirs,
+    effective_active_platforms: effectiveKViirs ?? 0,
+    effective_viirs_platforms: effectiveKViirs,
+    expected_viirs_platforms: integerExpectedViirs,
+    viirs_effective_platform_count: effectiveKViirs,
+    viirs_per_active_platform: viirsPerActivePlatform,
+    viirs_per_effective_platform: viirsPerActivePlatform,
+    normalized_viirs_per_platform: integerNormalizedRate,
+    viirs_per_platform_bin: viirsPerPlatformBin,
+    coverage_completeness_pct: coverageCompletenessPct,
+    platform_status_note:
+      availableViirsList.length > 0
+        ? `Active VIIRS platforms in covered bins: ${availableViirsList.join(', ')} (platform-days = ${totalViirsPlatformDays}/${totalEligibleDays}d, k_eff = ${effectiveKViirs ?? 0})`
+        : 'No active VIIRS platforms in covered bins.',
+    scientific_caveat:
+      'Exposure-weighted M2 observation-rate metric (R_VIIRS,eff = V / k_eff, where k_eff = sum(d_p)/D) accounting for exact active VIIRS platform-days (S-NPP through 2026-11-02, NOAA-20 from 2018-04-01, NOAA-21 from 2023-03-01). Not a calibrated fire count, physical incident total, or M3 cross-sensor bridge.',
+  };
+}
 
 /**
  * Parses FIRMS acquisition date (YYYY-MM-DD) and native HHMM time (e.g. "42", "0342", "1415")
@@ -1000,13 +1439,26 @@ export function aggregateCalendarAnalytics(params: {
     const modisConfBins = { low_0_29: 0, nominal_30_79: 0, high_80_100: 0 };
     const viirsConfBins = { low: 0, nominal: 0, high: 0 };
     const availableBinRecords: CanonicalObservation[] = [];
+    const binCellMap = new Map<string, { modis: boolean; viirs: boolean }>();
+    const isCoveredBin =
+      (coverageState as BinCoverageState) !== 'NO_SOURCE_DATA' &&
+      (coverageState as BinCoverageState) !== 'COVERAGE_UNKNOWN';
 
     for (const r of binRecords) {
+      if (!isCoveredBin) continue;
       if (r.sensor === 'MODIS' && !modisAvailable) continue;
       if (r.sensor === 'VIIRS' && !viirsAvailable) continue;
       availableBinRecords.push(r);
       if (r.sensor === 'MODIS') availableModisRecords.push(r);
       else availableViirsRecords.push(r);
+
+      const latBin = Math.floor(r.latitude * 4) / 4;
+      const lngBin = Math.floor(r.longitude * 4) / 4;
+      const cellKey = `${r.acq_date}|${latBin}|${lngBin}`;
+      const existingCell = binCellMap.get(cellKey) ?? { modis: false, viirs: false };
+      if (r.sensor === 'MODIS') existingCell.modis = true;
+      else existingCell.viirs = true;
+      binCellMap.set(cellKey, existingCell);
 
       platformBreakdown[r.platform] = (platformBreakdown[r.platform] ?? 0) + 1;
       processingBreakdown[r.processing_status] =
@@ -1030,6 +1482,10 @@ export function aggregateCalendarAnalytics(params: {
         ? null
         : (modisCount ?? 0) + (viirsCount ?? 0);
 
+    const spatialConcordance: BinSpatialConcordance | undefined = isCoveredBin
+      ? computeSpatialConcordanceFromCells(Array.from(binCellMap.values()))
+      : undefined;
+
     return {
       bin_key: bin.binKey,
       label: bin.label,
@@ -1038,8 +1494,8 @@ export function aggregateCalendarAnalytics(params: {
       granularity,
       coverage_state: coverageState,
       values: {
-        MODIS: modisCount,
-        VIIRS: viirsCount,
+        MODIS: isCoveredBin ? modisCount : null,
+        VIIRS: isCoveredBin ? viirsCount : null,
       },
       platform_breakdown: platformBreakdown,
       processing_breakdown: processingBreakdown,
@@ -1051,7 +1507,7 @@ export function aggregateCalendarAnalytics(params: {
         MODIS_numeric_bins: modisConfBins,
         VIIRS_categorical: viirsConfBins,
       },
-      pooled_observation_count: pooledCount,
+      pooled_observation_count: isCoveredBin ? pooledCount : null,
       pooled_caveat:
         'Unweighted arithmetic sum of MODIS and VIIRS observation records. Not a normalized cross-sensor fire count or unique incident total.',
       quality: {
@@ -1061,6 +1517,7 @@ export function aggregateCalendarAnalytics(params: {
         superseded_nrt_count: supersededNrtCount,
         exact_duplicates_removed: exactDuplicatesRemoved,
       },
+      spatial_concordance: spatialConcordance,
     };
   });
 
@@ -1133,8 +1590,46 @@ export function aggregateCalendarAnalytics(params: {
     )
   );
 
+  const cellSensorMap = new Map<string, { modis: boolean; viirs: boolean }>();
+  const coveredRecords = [...availableModisRecords, ...availableViirsRecords];
+  for (const r of coveredRecords) {
+    if (r.acq_date < startDate || r.acq_date > endDate) continue;
+    const latBin = Math.floor(r.latitude * 4) / 4;
+    const lngBin = Math.floor(r.longitude * 4) / 4;
+    const cKey = `${r.acq_date}|${latBin}|${lngBin}`;
+    const existing = cellSensorMap.get(cKey) ?? { modis: false, viirs: false };
+    if (r.sensor === 'MODIS') existing.modis = true;
+    else existing.viirs = true;
+    cellSensorMap.set(cKey, existing);
+  }
+
+  const methodId: MethodLevelId = sensor === 'ALL' ? 'M2_COMPARATIVE' : 'M1_AGGREGATED';
+  assertProductionMethodGate(methodId);
+
+  const viirsNormalization = computeViirsPlatformNormalization(series);
+
+  const crossSensorHarmonization = computeCrossSensorHarmonization({
+    series,
+    thresholds: { MODIS: thresholdsModis, VIIRS: thresholdsViirs },
+    totalModis,
+    totalViirs,
+    granularity,
+    startDate,
+    endDate,
+    aoiName: aoi.name,
+    cellSensorFlags: Array.from(cellSensorMap.values()),
+  });
+
   return {
     data_mode: 'DEMO_SNAPSHOT',
+    data_backing: 'DEMO_FIXTURE_BASELINE',
+    m3_production_status: 'M3_DISABLED',
+    requested_window: { start_date: startDate, end_date: endDate },
+    actual_coverage_window: {
+      start_date: archiveStartStr <= archiveEndStr ? archiveStartStr : null,
+      end_date: archiveStartStr <= archiveEndStr ? archiveEndStr : null,
+    },
+    incomplete_coverage: startDate < archiveStartStr || endDate > archiveEndStr,
     demo_notice:
       'DEMO DATA — Deterministic NASA FIRMS schema-validated archive fixtures (2024–2026). Not a live real-time emergency feed.',
     aoi: {
@@ -1155,7 +1650,7 @@ export function aggregateCalendarAnalytics(params: {
       daynight: dayNight,
     },
     method: {
-      id: sensor === 'ALL' ? 'M2_COMPARATIVE' : 'M1_AGGREGATED',
+      id: methodId,
       version: '1.0.0',
       description:
         sensor === 'ALL'
@@ -1178,6 +1673,8 @@ export function aggregateCalendarAnalytics(params: {
       superseded_nrt_total: supersededNrtCount,
       duplicates_removed_total: exactDuplicatesRemoved,
     },
+    cross_sensor_harmonization: crossSensorHarmonization,
+    viirs_platform_normalization: viirsNormalization,
     thresholds: {
       MODIS: thresholdsModis,
       VIIRS: thresholdsViirs,
@@ -1195,3 +1692,190 @@ export function aggregateCalendarAnalytics(params: {
     },
   };
 }
+
+/**
+ * Computes M2 Cross-Sensor Harmonization & Concordance metrics across common UTC time bins
+ * and 0.25° × 0.25° spatial cells without pooling or falsifying cross-sensor counts.
+ */
+export function computeCrossSensorHarmonization(params: {
+  series: CalendarBinRecord[];
+  thresholds: {
+    MODIS: [number, number, number, number];
+    VIIRS: [number, number, number, number];
+  };
+  totalModis: number;
+  totalViirs: number;
+  granularity: Granularity;
+  startDate: string;
+  endDate: string;
+  aoiName: string;
+  cellSensorFlags?: Array<{ modis: boolean; viirs: boolean }>;
+  precomputedCellCounts?: {
+    coLocated: number;
+    modisOnly: number;
+    viirsOnly: number;
+  };
+}): CrossSensorHarmonizationSummary {
+  const {
+    series,
+    thresholds,
+    totalModis,
+    totalViirs,
+    granularity,
+    startDate,
+    endDate,
+    aoiName,
+    cellSensorFlags = [],
+    precomputedCellCounts,
+  } = params;
+
+  let coDetectedBins = 0;
+  let viirsOnlyBins = 0;
+  let modisOnlyBins = 0;
+  let quietVerifiedBins = 0;
+  let coveredBinsCount = 0;
+
+  for (const bin of series) {
+    if (
+      bin.coverage_state === 'NO_SOURCE_DATA' ||
+      bin.coverage_state === 'COVERAGE_UNKNOWN'
+    ) {
+      bin.cross_sensor_regime = 'COVERAGE_GAP';
+      continue;
+    }
+
+    coveredBinsCount += 1;
+    const m = bin.values.MODIS ?? 0;
+    const v = bin.values.VIIRS ?? 0;
+
+    if (m === 0 && v === 0) {
+      bin.cross_sensor_regime = 'QUIET_VERIFIED';
+      quietVerifiedBins += 1;
+    } else if (m > 0 && v > 0) {
+      coDetectedBins += 1;
+      const mPeak = m >= thresholds.MODIS[1];
+      const vPeak = v >= thresholds.VIIRS[1];
+      bin.cross_sensor_regime = mPeak && vPeak ? 'DUAL_SENSOR_PEAK' : 'DUAL_SENSOR_ACTIVE';
+    } else if (v > 0 && m === 0) {
+      viirsOnlyBins += 1;
+      bin.cross_sensor_regime = 'VIIRS_375M_DOMINATED';
+    } else {
+      modisOnlyBins += 1;
+      bin.cross_sensor_regime = 'MODIS_1KM_ONLY';
+    }
+  }
+
+  const activeBinsTotal = coDetectedBins + viirsOnlyBins + modisOnlyBins;
+  const temporalConcordancePct =
+    activeBinsTotal > 0 ? Math.round((coDetectedBins / activeBinsTotal) * 100) : null;
+
+  const spatialStats = precomputedCellCounts
+    ? computeSpatialConcordanceFromCounts(precomputedCellCounts)
+    : computeSpatialConcordanceFromCells(cellSensorFlags);
+  const spatialCoLocatedCellsPct = spatialStats.spatial_co_located_cells_pct;
+
+  const coverageCompletenessPct =
+    series.length > 0 ? Math.round((coveredBinsCount / series.length) * 100) : null;
+
+  const viirsToModisRatio =
+    totalModis > 0 ? Number((totalViirs / totalModis).toFixed(2)) : null;
+
+  let dominantRegimeNote = 'No active thermal anomalies detected across available sensors in this window.';
+  if (activeBinsTotal > 0) {
+    if (coDetectedBins >= viirsOnlyBins && coDetectedBins >= modisOnlyBins && coDetectedBins > 0) {
+      dominantRegimeNote = `Dual-sensor corroboration in ${coDetectedBins}/${activeBinsTotal} active ${granularity} bin(s) (${temporalConcordancePct}% temporal concordance${
+        spatialCoLocatedCellsPct !== null ? `, ${spatialCoLocatedCellsPct}% 0.25° spatial co-location` : ''
+      })${
+        viirsToModisRatio !== null ? `; VIIRS 375 m recorded ${viirsToModisRatio}× detections relative to MODIS 1 km.` : '.'
+      }`;
+    } else if (viirsOnlyBins > coDetectedBins && viirsOnlyBins >= modisOnlyBins) {
+      dominantRegimeNote = `VIIRS 375 m-dominated regime (${viirsOnlyBins}/${activeBinsTotal} active ${granularity} bin(s) detected only by VIIRS 375 m), reflecting smaller or cooler sub-kilometer burning.`;
+    } else {
+      dominantRegimeNote = `MODIS 1 km-only regime (${modisOnlyBins}/${activeBinsTotal} active ${granularity} bin(s) detected only by MODIS Terra/Aqua; e.g., pre-2012 archive era or morning Terra overpass).`;
+    }
+  }
+
+  // Compute log Pearson r across co-detected bins when >= 3 co-detected bins exist
+  const logPairs: Array<[number, number]> = [];
+  for (const bin of series) {
+    const m = bin.values.MODIS ?? 0;
+    const v = bin.values.VIIRS ?? 0;
+    if (m > 0 && v > 0) {
+      logPairs.push([Math.log1p(m), Math.log1p(v)]);
+    }
+  }
+  let logPearsonR: number | null = null;
+  if (logPairs.length >= 3) {
+    const n = logPairs.length;
+    const meanX = logPairs.reduce((s, p) => s + p[0], 0) / n;
+    const meanY = logPairs.reduce((s, p) => s + p[1], 0) / n;
+    let cov = 0;
+    let varX = 0;
+    let varY = 0;
+    for (const [x, y] of logPairs) {
+      const dx = x - meanX;
+      const dy = y - meanY;
+      cov += dx * dy;
+      varX += dx * dx;
+      varY += dy * dy;
+    }
+    if (varX > 1e-9 && varY > 1e-9) {
+      logPearsonR = Number((cov / Math.sqrt(varX * varY)).toFixed(3));
+    }
+  }
+
+  return {
+    method_id: 'M2_COMPARATIVE',
+    m2_spatial_method_id: 'M2_GRID_DAILY_025_DEG',
+    m2_spatial_method_name: '0.25° × 0.25° Daily Grid Cell Co-Occurrence (24h UTC)',
+    method_version: '1.2.0',
+    formula:
+      'Concordance_T = count(t : N_MODIS(A,t) > 0 AND N_VIIRS(A,t) > 0) / count(t : N_MODIS(A,t) > 0 OR N_VIIRS(A,t) > 0); Concordance_S (Jaccard) = |C_M cap C_V| / |C_M cup C_V|; Ratio_{V:M} = N_VIIRS / N_MODIS',
+    spatial_unit: `${aoiName} (AOI & 0.25° × 0.25° WGS84 grid cells)`,
+    time_window: `${startDate} to ${endDate} (UTC ${granularity} bins)`,
+    spatial_resolution: '0.25° × 0.25° WGS84 grid cell (~27.8 km × 27.8 km at equator)',
+    temporal_resolution: '24h UTC calendar day',
+    spatial_threshold_km: 27.8,
+    temporal_threshold_hours: 24,
+    aggregation_method: 'FIXED_GRID_CELL_DAY_PARTITION',
+    active_bins_total: activeBinsTotal,
+    co_detected_bins_count: coDetectedBins,
+    viirs_only_bins_count: viirsOnlyBins,
+    modis_only_bins_count: modisOnlyBins,
+    quiet_verified_bins_count: quietVerifiedBins,
+    temporal_concordance_pct: temporalConcordancePct,
+    temporal_concordance: {
+      total_active_bins: activeBinsTotal,
+      co_active_bins: coDetectedBins,
+      co_detected_bins: coDetectedBins,
+      modis_only_bins: modisOnlyBins,
+      viirs_only_bins: viirsOnlyBins,
+      temporal_jaccard_pct: temporalConcordancePct,
+      log_pearson_r: logPearsonR,
+    },
+    spatial_co_located_cells_pct: spatialCoLocatedCellsPct,
+    spatial_concordance: spatialStats,
+    active_cells_total: spatialStats.active_cells_total,
+    co_located_cells_count: spatialStats.co_located_cells_count,
+    modis_only_cells_count: spatialStats.modis_only_cells_count,
+    viirs_only_cells_count: spatialStats.viirs_only_cells_count,
+    modis_eligible_cells_count: spatialStats.modis_eligible_cells_count,
+    viirs_eligible_cells_count: spatialStats.viirs_eligible_cells_count,
+    intersection_count: spatialStats.intersection_count,
+    union_count: spatialStats.union_count,
+    jaccard_index: spatialStats.jaccard_index,
+    modis_cell_co_detection_pct: spatialStats.modis_cell_co_detection_pct,
+    modis_co_detected_by_viirs_pct: spatialStats.modis_co_detected_by_viirs_pct,
+    modis_conditional_rate: spatialStats.modis_conditional_rate,
+    viirs_cell_co_detection_pct: spatialStats.viirs_cell_co_detection_pct,
+    viirs_co_detected_by_modis_pct: spatialStats.viirs_co_detected_by_modis_pct,
+    viirs_conditional_rate: spatialStats.viirs_conditional_rate,
+    coverage_completeness_pct: coverageCompletenessPct,
+    viirs_to_modis_ratio: viirsToModisRatio,
+    empirical_viirs_to_modis_ratio: viirsToModisRatio,
+    dominant_regime_note: dominantRegimeNote,
+    scientific_caveat:
+      'M2 Cross-Sensor Harmonization aligns MODIS C6.1 (1 km) and VIIRS C2 (375 m) onto identical UTC time bins and 0.25° spatial cells (M2_GRID_DAILY_025_DEG) to measure landscape-scale sensor co-occurrence without pooling raw counts as a normalized fire total. Coarse 0.25° daily cell co-occurrence (~771 km² at equator) is distinct from acute point-level clustering (M2_POINT_PROXIMITY_6H, 1.5–2.5 km, ±6h).',
+  };
+}
+

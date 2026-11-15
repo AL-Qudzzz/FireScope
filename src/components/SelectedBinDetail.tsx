@@ -145,7 +145,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
             </div>
 
             {/* VIIRS */}
-            <div className="space-y-1">
+            <div className="space-y-1 pb-3 border-b border-[var(--border-subtle)]">
               <div className="flex items-center justify-between text-[12px]">
                 <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
                   <span className="w-2.5 h-2.5 bg-[var(--viirs-fill)] inline-block rounded-full" />
@@ -162,10 +162,60 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                 <span>NOAA-20: {selectedBin.platform_breakdown.NOAA20.toLocaleString()}</span>
                 <span>NOAA-21: {selectedBin.platform_breakdown.NOAA21.toLocaleString()}</span>
               </div>
+              <div className="text-[11px] font-mono text-[var(--text-muted)] pt-0.5">
+                Per-Platform Rate (R_VIIRS,eff = V / k_eff):{' '}
+                <strong className="text-[var(--text-primary)]">
+                  {selectedBin.viirs_per_effective_platform !== null &&
+                  selectedBin.viirs_per_effective_platform !== undefined
+                    ? selectedBin.viirs_per_effective_platform.toLocaleString()
+                    : 'N/A'}
+                </strong>{' '}
+                (k_eff={selectedBin.viirs_effective_platform_count ?? 0} sat
+                {selectedBin.viirs_platform_days !== undefined
+                  ? ` · ${selectedBin.viirs_platform_days} sat-days`
+                  : ''}
+                )
+              </div>
             </div>
+
+            {/* Full-Bin M2 Spatial Co-Location (0.25° × 0.25° Grid) */}
+            {selectedBin.spatial_concordance && (
+              <div className="space-y-1 text-[11px] font-mono" data-testid="selected-bin-m2-concordance">
+                <div className="font-sans text-[12px] font-medium text-[var(--text-primary)] flex items-center justify-between gap-2">
+                  <span>Full-Bin M2 Grid Concordance (0.25° cell-days)</span>
+                  <span className="font-mono text-[var(--ember)] font-semibold">
+                    {selectedBin.spatial_concordance.cell_concordance_pct !== null &&
+                    selectedBin.spatial_concordance.cell_concordance_pct !== undefined
+                      ? `${selectedBin.spatial_concordance.cell_concordance_pct}% Jaccard`
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="text-[var(--text-secondary)] flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Both: <strong className="text-[var(--text-primary)]">{selectedBin.spatial_concordance.co_located_cells}</strong>
+                  </span>
+                  <span>
+                    MODIS-only: <strong className="text-[var(--modis)]">{selectedBin.spatial_concordance.modis_only_cells}</strong>
+                  </span>
+                  <span>
+                    VIIRS-only: <strong className="text-[var(--viirs)]">{selectedBin.spatial_concordance.viirs_only_cells}</strong>
+                  </span>
+                  <span>
+                    Union: <strong className="text-[var(--text-primary)]">{selectedBin.spatial_concordance.total_active_cells}</strong>
+                  </span>
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)] flex flex-wrap items-center justify-between gap-2">
+                  <span>Method: {selectedBin.spatial_concordance.m2_method_id ?? 'M2_GRID_DAILY_025_DEG'}</span>
+                  <span>
+                    P(V|M): {selectedBin.spatial_concordance.modis_cell_co_detected_pct ?? '—'}% · P(M|V):{' '}
+                    {selectedBin.spatial_concordance.viirs_cell_co_detected_pct ?? '—'}%
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="pt-2 border-t border-[var(--border-subtle)]">
+          <div className="pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2">
             <InfoPopover
               title="Native Sensor Confidence Breakdown"
               triggerLabel="Confidence breakdown"
@@ -189,6 +239,9 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                 </div>
               </div>
             </InfoPopover>
+            <span className="text-[10px] font-mono text-[var(--text-muted)]">
+              M3 Bridge: Disabled
+            </span>
           </div>
         </div>
 
@@ -415,14 +468,24 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
       {/* Bounded Paginated Observation Records Table */}
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <FileCode2 className="w-4 h-4 text-[var(--viirs)]" />
-            <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
-              {totalMatchingObservations !== undefined &&
-              totalMatchingObservations > binObservations.length
-                ? `Observation Records in Selected Time Bin (${binObservations.length.toLocaleString()} of ${totalMatchingObservations.toLocaleString()})`
-                : `Observation Records in Selected Time Bin (${binObservations.length.toLocaleString()})`}
-            </h3>
+          <div className="space-y-0.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <FileCode2 className="w-4 h-4 text-[var(--viirs)]" />
+              <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">
+                {totalMatchingObservations !== undefined &&
+                totalMatchingObservations > binObservations.length
+                  ? `Observation Records in Selected Time Bin (${binObservations.length.toLocaleString()} of ${totalMatchingObservations.toLocaleString()} previewed)`
+                  : `Observation Records in Selected Time Bin (${binObservations.length.toLocaleString()})`}
+              </h3>
+            </div>
+            {totalMatchingObservations !== undefined &&
+              totalMatchingObservations > binObservations.length && (
+                <p className="text-[11px] text-[var(--text-muted)]">
+                  Showing bounded {binObservations.length.toLocaleString()}-record inspection sample.
+                  All bin totals, FRP statistics, and M2 0.25° spatial concordance are computed
+                  server-side across all {totalMatchingObservations.toLocaleString()} records.
+                </p>
+              )}
           </div>
 
           {binObservations.length > pageSize && (
@@ -458,7 +521,7 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
           <div className="rounded border border-[var(--border-subtle)] bg-[var(--surface-2)]/40 px-3 py-2 flex flex-wrap items-center justify-between gap-3 text-[11px]">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
               <span className="font-medium text-[var(--text-secondary)]">
-                Cross-Sensor Co-Location:
+                Cross-Sensor Co-Location ({coLocation.method_id ?? 'M2_POINT_PROXIMITY_6H'}):
               </span>
               <span className="px-1.5 py-0.5 rounded bg-[var(--surface-1)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-secondary)]">
                 {coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS'
@@ -468,6 +531,9 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
               <span className="font-mono text-[var(--text-primary)] tabular-nums">
                 <strong>{coLocation.total_clusters.toLocaleString()}</strong>{' '}
                 {coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS' ? 'cell-days' : 'clusters'}
+                {coLocation.jaccard_index !== null && coLocation.jaccard_index !== undefined
+                  ? ` · ${coLocation.jaccard_index}% Jaccard`
+                  : ''}
               </span>
               <span className="px-1.5 py-0.5 rounded bg-[var(--success)]/12 border border-[var(--success)]/30 text-[var(--success)] font-mono tabular-nums">
                 Co-Detected (M+V): {coLocation.co_detected_clusters.toLocaleString()}
@@ -486,16 +552,29 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
             </div>
 
             <InfoPopover
-              title="Spatiotemporal Cross-Sensor Co-Location"
+              title="Spatiotemporal Cross-Sensor Co-Location & Method Separation"
               triggerLabel="Clustering rule"
               align="right"
             >
               <div className="space-y-1.5">
+                <p className="font-mono text-[10px] text-[var(--ember)] font-semibold">
+                  Method: {coLocation.method_id ?? 'M2_POINT_PROXIMITY_6H'} (
+                  {coLocation.spatial_resolution ?? coLocation.spatial_radius_km_rule} ·{' '}
+                  {coLocation.temporal_resolution ?? `±${coLocation.temporal_window_hours}h`})
+                </p>
                 <p className="text-[10px] text-[var(--text-secondary)] leading-snug">
                   {coLocation.evaluation_scope === 'FULL_BIN_GRID_BUCKETS'
                     ? `Evaluates all ${coLocation.total_observations.toLocaleString()} matching detections across daily ${coLocation.spatial_radius_km_rule}.`
                     : `Groups all ${coLocation.total_observations.toLocaleString()} MODIS (~1 km) and VIIRS (~375 m) pixel detections in this bin into physical thermal clusters within ${coLocation.spatial_radius_km_rule} Haversine distance and ±${coLocation.temporal_window_hours}h overpass separation (independent of table pagination).`}
                 </p>
+                {(coLocation.modis_conditional_rate !== null ||
+                  coLocation.viirs_conditional_rate !== null) && (
+                  <p className="font-mono text-[10px] text-[var(--text-primary)]">
+                    Conditional Rates — P(VIIRS | MODIS):{' '}
+                    {coLocation.modis_conditional_rate ?? '—'}% · P(MODIS | VIIRS):{' '}
+                    {coLocation.viirs_conditional_rate ?? '—'}%
+                  </p>
+                )}
                 {coLocation.co_detected_clusters > 0 && (
                   <p className="font-mono text-[10px] text-[var(--text-primary)]">
                     Co-detected totals: MODIS {coLocation.co_detected_modis_obs.toLocaleString()} obs (
@@ -503,6 +582,17 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
                     {coLocation.co_detected_viirs_obs.toLocaleString()} obs ({coLocation.co_detected_viirs_frp_mw} MW).
                   </p>
                 )}
+                {coLocation.method_id === 'M2_POINT_PROXIMITY_6H' &&
+                  selectedBin.spatial_concordance && (
+                    <p className="text-[10px] text-[var(--text-muted)] pt-1 border-t border-[var(--border-subtle)] leading-snug">
+                      Note: Acute point-proximity clustering (<code>M2_POINT_PROXIMITY_6H</code>,{' '}
+                      {coLocation.jaccard_index ?? '—'}% cluster Jaccard) requires ≤2.5 km &amp; ±6h
+                      overpass match, whereas Column 1 Grid Concordance (
+                      <code>M2_GRID_DAILY_025_DEG</code>,{' '}
+                      {selectedBin.spatial_concordance.cell_concordance_pct ?? '—'}% cell Jaccard)
+                      evaluates 0.25° (~28 km) × 24h UTC cell-day co-occurrence.
+                    </p>
+                  )}
               </div>
             </InfoPopover>
           </div>

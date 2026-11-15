@@ -1,10 +1,12 @@
 import {
+  BinCoverageState,
   CalendarBinRecord,
   CalendarMetricId,
   CanonicalObservation,
   CoLocationClassification,
   CoLocationCluster,
   CoLocationSummary,
+  DataSourceBacking,
   HarmonizationDiagnostics,
   HarmonizationSummary,
   HarmonizedBinPoint,
@@ -15,7 +17,7 @@ import {
 const MODIS_PLATFORMS: PlatformId[] = ['TERRA', 'AQUA'];
 const VIIRS_PLATFORMS: PlatformId[] = ['SNPP', 'NOAA20', 'NOAA21'];
 
-const PLATFORM_SERVICE_WINDOWS: Record<PlatformId, { start: string; end: string }> = {
+export const PLATFORM_SERVICE_WINDOWS: Record<PlatformId, { start: string; end: string }> = {
   TERRA: { start: '2000-11-01', end: '9999-12-31' },
   AQUA: { start: '2002-07-04', end: '9999-12-31' },
   SNPP: { start: '2012-01-20', end: '2026-11-02' },
@@ -44,6 +46,189 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   return quantileSorted(sorted, 0.5);
+}
+
+export interface PlatformExposureResult {
+  modis_active_platforms: number;
+  viirs_active_platforms: number;
+  eligible_days: number;
+  modis_platform_days: number;
+  viirs_platform_days: number;
+  modis_effective_platform_count: number;
+  viirs_effective_platform_count: number;
+  per_platform_covered_days: Record<PlatformId, number>;
+  // CamelCase aliases for callers in comparisonScience, firescopeApi, and tests
+  windowDays: number;
+  modisPlatformDays: number;
+  viirsPlatformDays: number;
+  modisEffectivePlatforms: number;
+  viirsEffectivePlatforms: number;
+  modisMaxIntegerPlatforms: number;
+  viirsMaxIntegerPlatforms: number;
+}
+
+export interface PlatformExposureOptions {
+  startUtc: string;
+  endUtc: string;
+  selectedPlatforms?: PlatformId[];
+  observedBreakdown?: Partial<Record<PlatformId, number>>;
+  platformRegistry?: Array<{
+    platform_id: PlatformId;
+    first_observation_date: string;
+    last_observation_date: string;
+  }>;
+  coveredDateWindows?: Array<{
+    start?: string;
+    end?: string;
+    startDate?: string;
+    endDate?: string;
+  }>;
+}
+
+/**
+ * Computes exact day-by-day platform exposure across a date window [startDateUtc, endDateUtc],
+ * accounting for platform commissioning/cutoff boundaries (e.g. S-NPP ending 2026-11-02)
+ * and optional covered date windows (so archive gaps are not counted as active exposure days).
+ */
+export function computePlatformExposure(
+  startDateUtcOrOpts: string | PlatformExposureOptions,
+  endDateUtc?: string,
+  activePlatforms?: PlatformId[],
+  platformBreakdownOrRegistry?:
+    | Partial<Record<PlatformId, number>>
+    | Array<{
+        platform_id: PlatformId;
+        first_observation_date: string;
+        last_observation_date: string;
+      }>,
+  coveredDateWindowsArg?: Array<{
+    start?: string;
+    end?: string;
+    startDate?: string;
+    endDate?: string;
+  }>
+): PlatformExposureResult {
+  const isOpts = typeof startDateUtcOrOpts === 'object' && startDateUtcOrOpts !== null;
+  const rawStart = isOpts ? startDateUtcOrOpts.startUtc : startDateUtcOrOpts;
+  const rawEnd = isOpts ? startDateUtcOrOpts.endUtc : (endDateUtc ?? rawStart);
+  const resolvedPlatforms = isOpts ? startDateUtcOrOpts.selectedPlatforms : activePlatforms;
+  const platformBreakdown = isOpts
+    ? startDateUtcOrOpts.observedBreakdown
+    : Array.isArray(platformBreakdownOrRegistry)
+    ? undefined
+    : platformBreakdownOrRegistry;
+  const platformRegistry = isOpts
+    ? startDateUtcOrOpts.platformRegistry
+    : Array.isArray(platformBreakdownOrRegistry)
+    ? platformBreakdownOrRegistry
+    : undefined;
+  const rawCoveredWindows = isOpts
+    ? startDateUtcOrOpts.coveredDateWindows
+    : coveredDateWindowsArg;
+
+  const normalizedWindows = rawCoveredWindows
+    ?.map((w) => ({
+      start: (w.start ?? w.startDate ?? '').slice(0, 10),
+      end: (w.end ?? w.endDate ?? '').slice(0, 10),
+    }))
+    .filter((w) => w.start.length === 10 && w.end.length === 10);
+
+  const startDay = String(rawStart ?? '').slice(0, 10);
+  const endDay = String(rawEnd ?? startDay).slice(0, 10);
+  const activeSet =
+    resolvedPlatforms !== undefined
+      ? new Set<PlatformId>(resolvedPlatforms)
+      : new Set<PlatformId>(['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21']);
+
+  const serviceWindows: Record<PlatformId, { start: string; end: string }> = {
+    TERRA: { ...PLATFORM_SERVICE_WINDOWS.TERRA },
+    AQUA: { ...PLATFORM_SERVICE_WINDOWS.AQUA },
+    SNPP: { ...PLATFORM_SERVICE_WINDOWS.SNPP },
+    NOAA20: { ...PLATFORM_SERVICE_WINDOWS.NOAA20 },
+    NOAA21: { ...PLATFORM_SERVICE_WINDOWS.NOAA21 },
+  };
+  if (platformRegistry && platformRegistry.length > 0) {
+    for (const entry of platformRegistry) {
+      if (entry.platform_id && serviceWindows[entry.platform_id]) {
+        // Keep canonical commission start dates and S-NPP cutoff (2026-11-02)
+        if (entry.platform_id === 'SNPP' && entry.last_observation_date) {
+          serviceWindows.SNPP.end = entry.last_observation_date;
+        }
+      }
+    }
+  }
+
+  const perPlatformDays: Record<PlatformId, number> = {
+    TERRA: 0,
+    AQUA: 0,
+    SNPP: 0,
+    NOAA20: 0,
+    NOAA21: 0,
+  };
+
+  const startMs = Date.parse(`${startDay}T00:00:00Z`);
+  const endMs = Date.parse(`${endDay}T00:00:00Z`);
+  let eligibleDays = 0;
+
+  if (Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= endMs) {
+    const dayMs = 86400000;
+    for (let ms = startMs; ms <= endMs; ms += dayMs) {
+      const dStr = new Date(ms).toISOString().slice(0, 10);
+      if (normalizedWindows && normalizedWindows.length > 0) {
+        const isCovered = normalizedWindows.some((w) => dStr >= w.start && dStr <= w.end);
+        if (!isCovered) continue;
+      }
+      eligibleDays += 1;
+      for (const p of [...MODIS_PLATFORMS, ...VIIRS_PLATFORMS]) {
+        if (!activeSet.has(p)) continue;
+        const win = serviceWindows[p];
+        if (dStr >= win.start && dStr <= win.end) {
+          perPlatformDays[p] += 1;
+        }
+      }
+    }
+  }
+
+  for (const p of [...MODIS_PLATFORMS, ...VIIRS_PLATFORMS]) {
+    if ((platformBreakdown?.[p] ?? 0) > 0 && perPlatformDays[p] === 0) {
+      perPlatformDays[p] = 1;
+      if (eligibleDays === 0) eligibleDays = 1;
+    }
+  }
+
+  const modisPlatformDays = perPlatformDays.TERRA + perPlatformDays.AQUA;
+  const viirsPlatformDays =
+    perPlatformDays.SNPP + perPlatformDays.NOAA20 + perPlatformDays.NOAA21;
+
+  const modisActive = MODIS_PLATFORMS.filter(
+    (p) => perPlatformDays[p] > 0 || (platformBreakdown?.[p] ?? 0) > 0
+  ).length;
+  const viirsActive = VIIRS_PLATFORMS.filter(
+    (p) => perPlatformDays[p] > 0 || (platformBreakdown?.[p] ?? 0) > 0
+  ).length;
+
+  const modisEff4 = eligibleDays > 0 ? roundTo(modisPlatformDays / eligibleDays, 4) : 0;
+  const viirsEff4 = eligibleDays > 0 ? roundTo(viirsPlatformDays / eligibleDays, 4) : 0;
+  const modisEff2 = eligibleDays > 0 ? roundTo(modisPlatformDays / eligibleDays, 2) : 0;
+  const viirsEff2 = eligibleDays > 0 ? roundTo(viirsPlatformDays / eligibleDays, 2) : 0;
+
+  return {
+    modis_active_platforms: modisActive,
+    viirs_active_platforms: viirsActive,
+    eligible_days: eligibleDays,
+    modis_platform_days: modisPlatformDays,
+    viirs_platform_days: viirsPlatformDays,
+    modis_effective_platform_count: modisEff4,
+    viirs_effective_platform_count: viirsEff4,
+    per_platform_covered_days: perPlatformDays,
+    windowDays: eligibleDays,
+    modisPlatformDays,
+    viirsPlatformDays,
+    modisEffectivePlatforms: modisEff2,
+    viirsEffectivePlatforms: viirsEff2,
+    modisMaxIntegerPlatforms: modisActive,
+    viirsMaxIntegerPlatforms: viirsActive,
+  };
 }
 
 /**
@@ -523,9 +708,18 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-function getCoLocationRadiusKm(obs: CanonicalObservation): number {
+function getCoLocationRadiusKm(obs: CanonicalObservation, overrideKm?: number): number {
+  if (typeof overrideKm === 'number' && Number.isFinite(overrideKm) && overrideKm > 0) {
+    return overrideKm;
+  }
   const maxDim = Math.max(obs.scan_native ?? 0, obs.track_native ?? 0, 1.0);
   return Math.max(1.5, Math.min(2.5, 0.75 * maxDim));
+}
+
+export interface PointConcordanceOptions {
+  spatialRadiusKmOverride?: number;
+  sourceBacking?: DataSourceBacking | string;
+  coverageState?: BinCoverageState;
 }
 
 /**
@@ -536,12 +730,44 @@ function getCoLocationRadiusKm(obs: CanonicalObservation): number {
 export function clusterCrossSensorObservations(
   observations: CanonicalObservation[],
   temporalWindowHours = 6,
-  maxReturnedClusters = 200
+  maxReturnedClusters = 200,
+  options?: PointConcordanceOptions
 ): CoLocationSummary {
+  const fixedRadius = options?.spatialRadiusKmOverride;
+  const radiusRuleStr =
+    typeof fixedRadius === 'number' && fixedRadius > 0
+      ? `Fixed ${fixedRadius.toFixed(1)} km Haversine proximity radius`
+      : 'max(1.5 km, min(2.5 km, 0.75 * max(scan, track, 1.0)))';
+  const spatialResStr =
+    typeof fixedRadius === 'number' && fixedRadius > 0
+      ? `${fixedRadius.toFixed(1)} km fixed radius`
+      : '1.5–2.5 km footprint-adaptive radius (~7.1–19.6 km²)';
+
   if (observations.length === 0) {
     return {
+      method_id: 'M2_POINT_PROXIMITY_6H',
+      method_name: 'Point-Based Proximity Clustering (1.5–2.5 km, ±6h Union-Find)',
+      spatial_resolution: spatialResStr,
+      temporal_resolution: `±${temporalWindowHours}h overpass window`,
+      spatial_threshold_km: fixedRadius ?? 2.5,
+      temporal_threshold_hours: temporalWindowHours,
+      aggregation_method: 'SINGLE_LINKAGE_UNION_FIND',
+      eligible_observation_count: 0,
+      modis_eligible_count: 0,
+      viirs_eligible_count: 0,
+      intersection_count: 0,
+      union_count: 0,
+      jaccard_index: null,
+      modis_conditional_rate: null,
+      viirs_conditional_rate: null,
+      spatial_concordance_pct: null,
+      modis_co_detection_pct: null,
+      viirs_co_detection_pct: null,
+      coverage_state: options?.coverageState ?? 'NO_DETECTIONS_IN_AVAILABLE_RECORDS',
+      source_backing: options?.sourceBacking ?? 'REAL_NASA_ARCHIVE_PARQUET',
+      note: 'M2_POINT_PROXIMITY_6H: Zero eligible point observations in this bin.',
       evaluation_scope: 'FULL_BIN_POINTS',
-      spatial_radius_km_rule: 'max(1.5 km, min(2.5 km, 0.75 * max(scan, track, 1.0)))',
+      spatial_radius_km_rule: radiusRuleStr,
       temporal_window_hours: temporalWindowHours,
       total_observations: 0,
       modis_total_detections: 0,
@@ -597,14 +823,15 @@ export function clusterCrossSensorObservations(
 
   const timeMs = new Float64Array(n);
   const radiiKm = new Float64Array(n);
-  const cellSizeDeg = 0.05; // ~5.5 km at equator, guarantees neighboring 2.5 km pairs are in 3x3 cells
+  const maxRadiusKm = typeof fixedRadius === 'number' && fixedRadius > 0 ? fixedRadius : 2.5;
+  const cellSizeDeg = Math.max(0.05, maxRadiusKm / 90);
   const grid = new Map<string, number[]>();
 
   for (let i = 0; i < n; i++) {
     const obs = observations[i];
     const parsed = Date.parse(obs.acq_datetime_utc);
     timeMs[i] = Number.isFinite(parsed) ? parsed : 0;
-    radiiKm[i] = getCoLocationRadiusKm(obs);
+    radiiKm[i] = getCoLocationRadiusKm(obs, fixedRadius);
 
     const gLat = Math.floor(obs.latitude / cellSizeDeg);
     const gLon = Math.floor(obs.longitude / cellSizeDeg);
@@ -749,9 +976,45 @@ export function clusterCrossSensorObservations(
       a.earliest_utc.localeCompare(b.earliest_utc)
   );
 
+  const unionCount = clusters.length;
+  const intersectionCount = coDetectedClusters;
+  const modisEligibleClusters = coDetectedClusters + modisOnlyClusters;
+  const viirsEligibleClusters = coDetectedClusters + viirsOnlyClusters;
+  const jaccardPct =
+    unionCount > 0 ? roundTo((intersectionCount / unionCount) * 100, 2) : null;
+  const modisCondRate =
+    modisEligibleClusters > 0
+      ? roundTo((intersectionCount / modisEligibleClusters) * 100, 2)
+      : null;
+  const viirsCondRate =
+    viirsEligibleClusters > 0
+      ? roundTo((intersectionCount / viirsEligibleClusters) * 100, 2)
+      : null;
+
   return {
+    method_id: 'M2_POINT_PROXIMITY_6H',
+    method_name: 'Point-Based Proximity Clustering (1.5–2.5 km, ±6h Union-Find)',
+    spatial_resolution: spatialResStr,
+    temporal_resolution: `±${temporalWindowHours}h overpass window`,
+    spatial_threshold_km: fixedRadius ?? 2.5,
+    temporal_threshold_hours: temporalWindowHours,
+    aggregation_method: 'SINGLE_LINKAGE_UNION_FIND',
+    eligible_observation_count: observations.length,
+    modis_eligible_count: modisEligibleClusters,
+    viirs_eligible_count: viirsEligibleClusters,
+    intersection_count: intersectionCount,
+    union_count: unionCount,
+    jaccard_index: jaccardPct,
+    modis_conditional_rate: modisCondRate,
+    viirs_conditional_rate: viirsCondRate,
+    spatial_concordance_pct: jaccardPct,
+    modis_co_detection_pct: modisCondRate,
+    viirs_co_detection_pct: viirsCondRate,
+    coverage_state: options?.coverageState ?? 'OBSERVED_ACTIVE',
+    source_backing: options?.sourceBacking ?? 'REAL_NASA_ARCHIVE_PARQUET',
+    note: 'M2_POINT_PROXIMITY_6H: Point-level single-linkage Union-Find clustering within footprint radius (1.5–2.5 km) and ±6h overpass tolerance. Measures acute event-level co-location (~7–20 km²); not directly comparable to M2_GRID_DAILY_025_DEG (~771 km² 0.25° daily cell co-occurrence). Single-linkage chaining can merge contiguous fire fronts bridged by intermediate pixels.',
     evaluation_scope: 'FULL_BIN_POINTS',
-    spatial_radius_km_rule: 'max(1.5 km, min(2.5 km, 0.75 * max(scan, track, 1.0)))',
+    spatial_radius_km_rule: radiusRuleStr,
     temporal_window_hours: temporalWindowHours,
     total_observations: observations.length,
     modis_total_detections: modisTotalDetections,
@@ -780,13 +1043,19 @@ export interface SpatialBucketInput {
   frp_sum_mw: number;
 }
 
+export interface GridConcordanceOptions {
+  sourceBacking?: DataSourceBacking | string;
+  coverageState?: BinCoverageState;
+}
+
 /**
  * Evaluates full-bin MODIS/VIIRS spatial concordance across 100% of 0.25-deg daily grid buckets
  * (used for pre-Oct-2026 Parquet daily aggregates and Seeded Global Presets without row sampling bias).
  */
 export function computeBucketSpatialConcordance(
   buckets: SpatialBucketInput[],
-  maxReturnedClusters = 200
+  maxReturnedClusters = 200,
+  options?: GridConcordanceOptions
 ): CoLocationSummary | null {
   const cellGroups = new Map<
     string,
@@ -904,7 +1173,43 @@ export function computeBucketSpatialConcordance(
       a.earliest_utc.localeCompare(b.earliest_utc)
   );
 
+  const unionCount = clusters.length;
+  const intersectionCount = coDetectedClusters;
+  const modisEligibleCells = coDetectedClusters + modisOnlyClusters;
+  const viirsEligibleCells = coDetectedClusters + viirsOnlyClusters;
+  const jaccardPct =
+    unionCount > 0 ? roundTo((intersectionCount / unionCount) * 100, 2) : null;
+  const modisCondRate =
+    modisEligibleCells > 0
+      ? roundTo((intersectionCount / modisEligibleCells) * 100, 2)
+      : null;
+  const viirsCondRate =
+    viirsEligibleCells > 0
+      ? roundTo((intersectionCount / viirsEligibleCells) * 100, 2)
+      : null;
+
   return {
+    method_id: 'M2_GRID_DAILY_025_DEG',
+    method_name: '0.25° × 0.25° Daily Grid Cell Co-Occurrence (24h UTC)',
+    spatial_resolution: '0.25° × 0.25° WGS84 grid cell (~27.8 km × 27.8 km at equator)',
+    temporal_resolution: '24h UTC calendar day',
+    spatial_threshold_km: 27.8,
+    temporal_threshold_hours: 24,
+    aggregation_method: 'FIXED_GRID_CELL_DAY_PARTITION',
+    eligible_observation_count: totalObs,
+    modis_eligible_count: modisEligibleCells,
+    viirs_eligible_count: viirsEligibleCells,
+    intersection_count: intersectionCount,
+    union_count: unionCount,
+    jaccard_index: jaccardPct,
+    modis_conditional_rate: modisCondRate,
+    viirs_conditional_rate: viirsCondRate,
+    spatial_concordance_pct: jaccardPct,
+    modis_co_detection_pct: modisCondRate,
+    viirs_co_detection_pct: viirsCondRate,
+    coverage_state: options?.coverageState ?? 'OBSERVED_ACTIVE',
+    source_backing: options?.sourceBacking ?? 'REAL_NASA_ARCHIVE_PARQUET',
+    note: 'M2_GRID_DAILY_025_DEG: Coarse 0.25° × 0.25° (~771 km² at equator, scaling with cos(latitude)) same-UTC-day cell co-occurrence index. Evaluates landscape-scale co-activity; yields ~3× higher Jaccard concordance than M2_POINT_PROXIMITY_6H (~7–20 km², ±6h) and must not be conflated with point proximity clustering.',
     evaluation_scope: 'FULL_BIN_GRID_BUCKETS',
     spatial_radius_km_rule: '0.25° × 0.25° grid cell same-UTC-day concordance',
     temporal_window_hours: 24,

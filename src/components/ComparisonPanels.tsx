@@ -769,8 +769,11 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                     {data.totals.period_a_viirs_per_satellite !== null &&
                       data.totals.period_a_viirs_per_satellite !== undefined && (
                         <div className="text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
-                          Per-sat ({data.totals.period_a_viirs_satellites ?? 1} sat):{' '}
-                          {data.totals.period_a_viirs_per_satellite.toLocaleString()}/sat
+                          Per-sat (k_eff=
+                          {data.totals.period_a_viirs_effective_satellites ??
+                            data.totals.period_a_viirs_satellites ??
+                            1}{' '}
+                          sat): {data.totals.period_a_viirs_per_satellite.toLocaleString()}/sat
                         </div>
                       )}
                   </div>
@@ -785,8 +788,11 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                     {data.totals.period_b_viirs_per_satellite !== null &&
                       data.totals.period_b_viirs_per_satellite !== undefined && (
                         <div className="text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
-                          Per-sat ({data.totals.period_b_viirs_satellites ?? 1} sat):{' '}
-                          {data.totals.period_b_viirs_per_satellite.toLocaleString()}/sat
+                          Per-sat (k_eff=
+                          {data.totals.period_b_viirs_effective_satellites ??
+                            data.totals.period_b_viirs_satellites ??
+                            1}{' '}
+                          sat): {data.totals.period_b_viirs_per_satellite.toLocaleString()}/sat
                         </div>
                       )}
                   </div>
@@ -795,7 +801,7 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                 {data.totals.viirs_per_satellite_delta !== null &&
                   data.totals.viirs_per_satellite_delta !== undefined && (
                     <div className="pt-2 border-t border-[var(--border-subtle)]/70 flex items-center justify-between text-[11px] font-mono text-[var(--text-muted)] tabular-nums">
-                      <span>Per-satellite rate (V / k_VIIRS) Δ</span>
+                      <span>Exposure-weighted rate (V / k_eff) Δ</span>
                       <span>
                         {data.totals.viirs_per_satellite_delta > 0 ? '+' : ''}
                         {data.totals.viirs_per_satellite_delta.toLocaleString()}/sat (

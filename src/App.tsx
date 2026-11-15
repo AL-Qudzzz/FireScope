@@ -629,16 +629,16 @@ export default function App() {
                             <span className="w-2.5 h-2.5 bg-[var(--viirs-fill)] inline-block rounded-full" />
                             <span>VIIRS Observed Detections</span>
                           </span>
-                          <InfoPopover title="VIIRS Collection 2" align="right">
+                          <InfoPopover title="VIIRS Collection 2 & Platform Normalization" align="right">
                             <div className="space-y-1">
                               <p>
                                 Nominal ~375 m I-band thermal anomaly detections from Suomi-NPP,
                                 NOAA-20, and NOAA-21 (VIIRS Collection 2).
                               </p>
                               <p>
-                                Detects smaller and cooler fires than MODIS 1 km, so raw counts
-                                cannot be pooled as sensor-normalized activity. S-NPP archive ends
-                                2026-11-02.
+                                Per-Platform Rate (R_VIIRS = V / k_eff_VIIRS) normalizes for changes
+                                in active VIIRS satellites across 2012–2026 (S-NPP archive ends
+                                2026-11-02).
                               </p>
                             </div>
                           </InfoPopover>
@@ -646,8 +646,39 @@ export default function App() {
                         {isCalendarLoading ? (
                           <div className="h-8 w-28 rounded atlas-skeleton" />
                         ) : (
-                          <div className="text-[26px] leading-tight font-mono font-semibold text-[var(--viirs)] tabular-nums">
-                            {calendarAnalytics.totals.VIIRS_detections.toLocaleString()}
+                          <div className="flex items-baseline justify-between gap-2">
+                            <div className="text-[26px] leading-tight font-mono font-semibold text-[var(--viirs)] tabular-nums">
+                              {calendarAnalytics.totals.VIIRS_detections.toLocaleString()}
+                            </div>
+                            {(calendarAnalytics.viirs_platform_normalization?.viirs_per_effective_platform ??
+                              calendarAnalytics.viirs_platform_normalization?.normalized_viirs_per_platform) !==
+                              null &&
+                              (calendarAnalytics.viirs_platform_normalization?.viirs_per_effective_platform ??
+                                calendarAnalytics.viirs_platform_normalization?.normalized_viirs_per_platform) !==
+                                undefined && (
+                                <div
+                                  className="text-[11px] font-mono text-[var(--text-secondary)] tabular-nums"
+                                  title="Exposure-weighted VIIRS detections per active VIIRS platform (R_VIIRS,eff = V / k_eff)"
+                                >
+                                  R_VIIRS:{' '}
+                                  <strong className="text-[var(--text-primary)]">
+                                    {(
+                                      calendarAnalytics.viirs_platform_normalization
+                                        ?.viirs_per_effective_platform ??
+                                      calendarAnalytics.viirs_platform_normalization
+                                        ?.normalized_viirs_per_platform ??
+                                      0
+                                    ).toLocaleString()}
+                                  </strong>
+                                  /sat (k_eff=
+                                  {calendarAnalytics.viirs_platform_normalization
+                                    ?.effective_viirs_platforms ??
+                                    calendarAnalytics.viirs_platform_normalization
+                                      ?.expected_viirs_platforms ??
+                                    0}
+                                  )
+                                </div>
+                              )}
                           </div>
                         )}
                         <div className="text-[11px] font-mono text-[var(--text-muted)]">
@@ -691,35 +722,71 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Metric 4: Pooled Records */}
-                      <div className="p-3.5 md:px-4 md:py-3.5 space-y-1">
+                      {/* Metric 4: Level M2 Cross-Sensor Harmonization */}
+                      <div className="p-3.5 md:px-4 md:py-3.5 space-y-1" data-testid="summary-m2-harmonization">
                         <div className="flex items-center justify-between gap-2 text-[12px] font-medium text-[var(--text-secondary)]">
-                          <span>Pooled Observation Records</span>
+                          <span>Cross-Sensor Harmonization (M2)</span>
                           <InfoPopover
-                            title="Pooled Observation Records"
+                            title="Level M2 Cross-Sensor Harmonization (M2_GRID_DAILY_025_DEG)"
                             align="right"
                           >
-                            <div className="space-y-1">
+                            <div className="space-y-1.5">
                               <p>
-                                Unweighted sum across sensors (MODIS + VIIRS), not unique fire
-                                incidents or normalized fire activity.
+                                Harmonizes MODIS (1 km C6.1) and VIIRS (375 m C2) into shared UTC
+                                calendar bins and daily 0.25° × 0.25° WGS84 grid cells
+                                (<code className="font-mono">M2_GRID_DAILY_025_DEG</code>) to measure
+                                both temporal bin co-detection and spatial cell Jaccard concordance.
                               </p>
                               <p>
-                                Because MODIS (1 km) and VIIRS (375 m) differ in pixel footprint and
-                                overpass timing, one fire can produce multiple detections.
+                                {calendarAnalytics.cross_sensor_harmonization?.scientific_caveat ??
+                                  'VIIRS 375 m resolves smaller/cooler fires than MODIS 1 km; raw counts are never equated.'}
                               </p>
                             </div>
                           </InfoPopover>
                         </div>
                         {isCalendarLoading ? (
-                          <div className="h-8 w-28 rounded atlas-skeleton" />
+                          <div className="h-8 w-36 rounded atlas-skeleton" />
                         ) : (
-                          <div className="text-[24px] leading-tight font-mono font-semibold text-[var(--text-primary)] tabular-nums">
-                            {calendarAnalytics.totals.pooled_observation_count.toLocaleString()}
+                          <div className="text-[16px] leading-tight py-0.5 font-mono font-semibold text-[var(--text-primary)] tabular-nums flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                            <span>
+                              Temp:{' '}
+                              {calendarAnalytics.cross_sensor_harmonization?.temporal_concordance
+                                ?.temporal_jaccard_pct !== null &&
+                              calendarAnalytics.cross_sensor_harmonization?.temporal_concordance
+                                ?.temporal_jaccard_pct !== undefined
+                                ? `${calendarAnalytics.cross_sensor_harmonization.temporal_concordance.temporal_jaccard_pct}%`
+                                : 'N/A'}
+                            </span>
+                            <span className="text-[var(--text-muted)]">·</span>
+                            <span className="text-[var(--ember)]">
+                              0.25° Spatial:{' '}
+                              {calendarAnalytics.cross_sensor_harmonization?.spatial_concordance
+                                ?.cell_concordance_pct !== null &&
+                              calendarAnalytics.cross_sensor_harmonization?.spatial_concordance
+                                ?.cell_concordance_pct !== undefined
+                                ? `${calendarAnalytics.cross_sensor_harmonization.spatial_concordance.cell_concordance_pct}%`
+                                : 'N/A'}
+                            </span>
+                            {calendarAnalytics.cross_sensor_harmonization
+                              ?.empirical_viirs_to_modis_ratio !== null &&
+                              calendarAnalytics.cross_sensor_harmonization
+                                ?.empirical_viirs_to_modis_ratio !== undefined && (
+                                <span className="text-[12px] text-[var(--viirs)] font-medium">
+                                  ({calendarAnalytics.cross_sensor_harmonization.empirical_viirs_to_modis_ratio}× V:M)
+                                </span>
+                              )}
                           </div>
                         )}
-                        <div className="text-[11px] text-[var(--text-muted)]">
-                          Unweighted sensor sum
+                        <div className="text-[11px] font-mono text-[var(--text-muted)]">
+                          0.25° Cells — Both:{' '}
+                          {calendarAnalytics.cross_sensor_harmonization?.spatial_concordance
+                            ?.co_located_cells ?? 0}{' '}
+                          · M-only:{' '}
+                          {calendarAnalytics.cross_sensor_harmonization?.spatial_concordance
+                            ?.modis_only_cells ?? 0}{' '}
+                          · V-only:{' '}
+                          {calendarAnalytics.cross_sensor_harmonization?.spatial_concordance
+                            ?.viirs_only_cells ?? 0}
                         </div>
                       </div>
                     </section>
