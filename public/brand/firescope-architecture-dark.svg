@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="firescope-architecture-dark-title firescope-architecture-dark-desc" id="firescope-architecture-dark-root">
         <title id="firescope-architecture-dark-title">FireScope System Architecture</title>
-        <desc id="firescope-architecture-dark-desc">Night Orbit dark-theme architecture showing NASA FIRMS and EONET live feeds and local Parquet and global preset archives flowing into the Express REST API, scientific engines, M3 cross-sensor harmonizer, and React 19 workspace.</desc>
+        <desc id="firescope-architecture-dark-desc">Night Orbit dark-theme architecture showing NASA FIRMS and EONET live feeds and local Parquet and global preset archives flowing into the Express REST API, scientific engines, co-location concordance and opt-in M3 module, and React 19 workspace.</desc>
         <defs>
       <style>#firescope-architecture-dark-root { --color-paper:   #0A1014;
       --color-paper-2: #16222B;
@@ -160,13 +160,13 @@
         <text x="596" y="308" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">Period &amp; Grid</text>
         <text x="596" y="324" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">comparisonScience.ts</text>
 
-        <!-- Node 7: M3 Harmonizer (focal 2) -->
+        <!-- Node 7: Co-Location & Opt-in M3 (focal 2) -->
         <rect x="420" y="404" width="180" height="64" rx="6" fill="#0A1014"/>
         <rect x="420" y="404" width="180" height="64" rx="6" fill="#f0783c" fill-opacity="0.10" stroke="#F0783C" stroke-width="1"/>
-        <rect x="428" y="412" width="24" height="12" rx="2" fill="none" stroke="#f0783c" stroke-opacity="0.50" stroke-width="0.8"/>
-        <text x="440" y="421" fill="#F0783C" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">M3</text>
+        <rect x="428" y="412" width="52" height="12" rx="2" fill="none" stroke="#f0783c" stroke-opacity="0.50" stroke-width="0.8"/>
+        <text x="454" y="421" fill="#F0783C" font-size="7" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">M3 OPT-IN</text>
         <text x="592" y="428" fill="#f0783c" fill-opacity="0.14" font-size="22" font-weight="600" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="end">02</text>
-        <text x="510" y="440" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">M3 Harmonizer</text>
+        <text x="510" y="440" fill="#ECF2F5" font-size="12" font-weight="600" font-family="'IBM Plex Sans', system-ui, sans-serif" text-anchor="middle">Co-Location &amp; M3</text>
         <text x="510" y="456" fill="#B2C2CC" font-size="9" font-family="'IBM Plex Mono', ui-monospace, monospace" text-anchor="middle">harmonizationScience.ts</text>
 
         <!-- Node 8: React 19 Workspace (input/client) -->
@@ -200,5 +200,5 @@
         <text x="636" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">External feed</text>
 
         <line x1="736" y1="557" x2="760" y2="557" stroke="#B2C2CC" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#firescope-architecture-dark-arrow)"/>
-        <text x="768" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">Client inspection</text>
+        <text x="768" y="560" fill="#B2C2CC" font-size="8.5" font-family="'IBM Plex Sans', system-ui, sans-serif">Bin co-location</text>
       </svg>
