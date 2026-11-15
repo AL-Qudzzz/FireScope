@@ -334,29 +334,54 @@ export function useFireScopeWorkspace() {
     'calendar' | 'period-compare' | 'aoi-compare'
   >('calendar');
 
+  const queryDatesRef = useRef({
+    startDate: queryState.startDate,
+    endDate: queryState.endDate,
+  });
+  queryDatesRef.current = {
+    startDate: queryState.startDate,
+    endDate: queryState.endDate,
+  };
+  const isManualSyncRef = useRef<boolean>(false);
+  const [isDataStatusSyncing, setIsDataStatusSyncing] = useState<boolean>(true);
+  const [isBootSyncPending, setIsBootSyncPending] = useState<boolean>(true);
+  const [isManualSyncPending, setIsManualSyncPending] = useState<boolean>(false);
+
   useEffect(() => {
     let isCancelled = false;
+    setIsDataStatusSyncing(true);
 
     fetchDataStatusFromApi()
       .then((status) => {
         if (isCancelled) return;
         setDataStatus(status);
-        if (
-          refreshNonce === 0 &&
+        const shouldApplyLiveWindow =
+          (refreshNonce === 0 || isManualSyncRef.current) &&
           status.live_firms_connected &&
           status.live_firms_min_date &&
           status.live_firms_max_date &&
           !initialUrlParams.get('start') &&
-          !initialUrlParams.get('end')
-        ) {
-          setQueryState((prev) => ({
-            ...prev,
-            startDate: status.live_firms_min_date!,
-            endDate: status.live_firms_max_date!,
-          }));
+          !initialUrlParams.get('end');
+        if (shouldApplyLiveWindow) {
+          const datesChanged =
+            queryDatesRef.current.startDate !== status.live_firms_min_date ||
+            queryDatesRef.current.endDate !== status.live_firms_max_date;
+          if (datesChanged) {
+            setHotspotsMeta((prev) => (prev.isLoading ? prev : { ...prev, isLoading: true }));
+            setQueryState((prev) => ({
+              ...prev,
+              startDate: status.live_firms_min_date!,
+              endDate: status.live_firms_max_date!,
+            }));
+          }
         }
+        setIsDataStatusSyncing(false);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!isCancelled) {
+          setIsDataStatusSyncing(false);
+        }
+      });
 
     return () => {
       isCancelled = true;
@@ -863,6 +888,10 @@ export function useFireScopeWorkspace() {
   };
 
   const triggerManualRefresh = () => {
+    isManualSyncRef.current = true;
+    setIsManualSyncPending(true);
+    setIsDataStatusSyncing(true);
+    setHotspotsMeta((prev) => (prev.isLoading ? prev : { ...prev, isLoading: true }));
     setRefreshNonce((n) => n + 1);
     showToast('Refreshing live NASA FIRMS streams...');
   };
@@ -870,6 +899,38 @@ export function useFireScopeWorkspace() {
   const retryCalendar = () => {
     setCalendarRetryNonce((n) => n + 1);
   };
+
+  useEffect(() => {
+    if (isDataStatusSyncing) return;
+    const waitForMap = activeRoute === 'map' ? hotspotsMeta.isLoading : false;
+    const waitForAnalysis = activeRoute === 'analysis' ? isCalendarLoading : false;
+    if (!waitForMap && !waitForAnalysis) {
+      setIsBootSyncPending(false);
+      if (isManualSyncPending) {
+        isManualSyncRef.current = false;
+        setIsManualSyncPending(false);
+      }
+    }
+  }, [
+    isDataStatusSyncing,
+    activeRoute,
+    hotspotsMeta.isLoading,
+    isCalendarLoading,
+    isManualSyncPending,
+  ]);
+
+  const dismissSyncOverlay = useCallback(() => {
+    isManualSyncRef.current = false;
+    setIsBootSyncPending(false);
+    setIsManualSyncPending(false);
+  }, []);
+
+  const isSyncOverlayActive = isBootSyncPending || isManualSyncPending;
+  const syncOverlayPhase: 'connecting' | 'streaming' | 'ready' = !isSyncOverlayActive
+    ? 'ready'
+    : isDataStatusSyncing
+    ? 'connecting'
+    : 'streaming';
 
   return {
     PRESET_AOIS,
@@ -944,5 +1005,11 @@ export function useFireScopeWorkspace() {
     handleShareView,
     handleDownloadCsv,
     triggerManualRefresh,
+    firmsSyncOverlay: {
+      isSyncing: isSyncOverlayActive,
+      phase: syncOverlayPhase,
+      isManualTrigger: isManualSyncPending,
+      dismiss: dismissSyncOverlay,
+    },
   };
 }

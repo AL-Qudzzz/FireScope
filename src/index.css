@@ -183,4 +183,103 @@
   border-top-color: #30434F;
 }
 
+/* Full-screen NASA FIRMS Sync Splash Overlay (entry/exit & flame bottom-up fill) */
+.firescope-sync-overlay {
+  display: flex;
+  opacity: 1;
+  background: radial-gradient(
+    circle at 50% 44%,
+    rgba(240, 120, 60, 0.14) 0%,
+    rgba(7, 19, 29, 0.78) 46%,
+    rgba(4, 10, 16, 0.88) 100%
+  );
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  transition:
+    display,
+    opacity ease-out,
+    backdrop-filter ease-out,
+    -webkit-backdrop-filter ease-out;
+  transition-duration: 0.34s;
+  transition-behavior: allow-discrete;
+}
+
+@starting-style {
+  .firescope-sync-overlay[data-enter="animate"] {
+    opacity: 0;
+  }
+}
+
+.firescope-sync-overlay:where([hidden], [data-closing]) {
+  opacity: 0;
+  -webkit-backdrop-filter: blur(0px);
+  backdrop-filter: blur(0px);
+}
+
+.firescope-sync-overlay[hidden] {
+  display: none;
+}
+
+.firescope-sync-card {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 0.28s ease-out,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.firescope-sync-overlay:where([hidden], [data-closing]) .firescope-sync-card {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.985);
+}
+
+.firescope-flame-reveal {
+  clip-path: inset(calc(100% - var(--sync-fill, 0%)) 0 0 0);
+  transition: clip-path 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.firescope-flame-halo {
+  transition: opacity 280ms ease-out, transform 280ms ease-out;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .firescope-flame-halo[data-active="true"] {
+    animation: firescopeHaloBreathe 3.2s ease-in-out infinite;
+  }
+}
+
+@keyframes firescopeHaloBreathe {
+  0%, 100% {
+    transform: scale(0.96);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .firescope-sync-overlay {
+    transition-duration: 0.12s;
+  }
+  .firescope-sync-card,
+  .firescope-sync-overlay:where([hidden], [data-closing]) .firescope-sync-card {
+    transform: none;
+    transition-duration: 0.12s;
+  }
+  .firescope-flame-reveal {
+    transition-duration: 120ms;
+  }
+  .firescope-flame-halo {
+    animation: none;
+    transition-duration: 120ms;
+  }
+}
+
+@media (forced-colors: active) {
+  .firescope-sync-overlay {
+    background: Canvas;
+    color: CanvasText;
+  }
+}
+
 

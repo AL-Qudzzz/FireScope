@@ -12,6 +12,7 @@ import {
 import { GlobalHeader } from './components/GlobalHeader';
 import { PrimaryNavigationDrawer } from './components/PrimaryNavigationDrawer';
 import { MapCanvas } from './components/MapCanvas';
+import { FirmsSyncOverlay } from './components/FirmsSyncOverlay';
 import {
   AoiSearchPanel,
   LayerDrawer,
@@ -109,13 +110,18 @@ export default function App() {
     handleShareView,
     handleDownloadCsv,
     triggerManualRefresh,
+    firmsSyncOverlay,
   } = useFireScopeWorkspace();
 
   const hasSnppArchiveGap =
     queryState.platforms.includes('SNPP') && queryState.endDate > '2026-11-02';
 
   return (
-    <div className="h-[100dvh] w-full max-w-full overflow-hidden flex flex-col bg-[var(--app-bg)] text-[var(--text-primary)]">
+    <>
+      <div
+        inert={firmsSyncOverlay.isSyncing || undefined}
+        className="h-[100dvh] w-full max-w-full overflow-hidden flex flex-col bg-[var(--app-bg)] text-[var(--text-primary)]"
+      >
       {/* 1. Global Application Command Bar */}
       <GlobalHeader
         activeRoute={activeRoute}
@@ -1014,6 +1020,16 @@ export default function App() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+
+      <FirmsSyncOverlay
+        isSyncing={firmsSyncOverlay.isSyncing}
+        phase={firmsSyncOverlay.phase}
+        isManualTrigger={firmsSyncOverlay.isManualTrigger}
+        liveConnected={Boolean(dataStatus.live_firms_connected)}
+        liveCount={dataStatus.live_firms_count}
+        onDismissEarly={firmsSyncOverlay.dismiss}
+      />
+    </>
   );
 }

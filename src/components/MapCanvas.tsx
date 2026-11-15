@@ -1387,7 +1387,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
                 ? `${mapDisplayMode.toUpperCase()} ${gridData.cell_size_deg}°: ${gridData.cell_count.toLocaleString()} cells · M:${gridData.total_detections_modis.toLocaleString()} V:${gridData.total_detections_viirs.toLocaleString()} · ${gridData.data_backing}`
                 : hotspotsMeta
                 ? hotspotsMeta.isLoading
-                  ? 'Syncing NASA FIRMS...'
+                  ? hotspotsMeta.dataBacking
+                    ? 'Updating viewport...'
+                    : 'Syncing NASA FIRMS...'
                   : hotspotsMeta.dataBacking === 'NO_SOURCE_DATA'
                   ? '0 points (NO_SOURCE_DATA for AOI/window)'
                   : hotspotsMeta.sampled

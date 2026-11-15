@@ -4,7 +4,7 @@ interface BrandSvgProps {
   className?: string;
 }
 
-const FLAME_PATHS: readonly { d: string; fill: string }[] = [
+export const FLAME_PATHS: readonly { d: string; fill: string }[] = [
   {
     d: 'M0 113.46L23.3487 165.995L64.5737 179.128L109.812 165.995L129.512 74.0591L115.284 85.3686L64.5737 0L31.7396 94.854L14.9577 74.0591L0 113.46Z',
     fill: '#F62B00',
