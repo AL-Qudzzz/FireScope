@@ -26,8 +26,12 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
   onSelectBin,
   isLoading = false,
 }) => {
-  const [breakdownMode, setBreakdownMode] = useState<'sensor' | 'platform'>('sensor');
-  const { series, query } = analytics;
+  const [breakdownMode, setBreakdownMode] = useState<'sensor' | 'platform' | 'harmonized'>('sensor');
+  const { series, query, harmonization } = analytics;
+  const diag = harmonization?.diagnostics;
+  const harmonizedPoints = harmonization?.points ?? [];
+
+  const harmonizedByKey = new Map(harmonizedPoints.map((pt) => [pt.bin_key, pt]));
 
   const maxSensorVal = Math.max(
     10,
@@ -42,6 +46,17 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
     })
   );
 
+  const maxHarmonizedVal = Math.max(
+    10,
+    ...harmonizedPoints.map((pt) =>
+      Math.max(
+        pt.bridged_upper_80 ?? pt.bridged_modis_equiv ?? 0,
+        pt.viirs_calibrated_modis_equiv ?? 0,
+        pt.modis_raw ?? 0
+      )
+    )
+  );
+
   const maxPlatformCount = Math.max(
     10,
     ...series.flatMap((b) => [
@@ -53,7 +68,12 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
     ])
   );
 
-  const effectiveMax = breakdownMode === 'platform' ? maxPlatformCount : maxSensorVal;
+  const effectiveMax =
+    breakdownMode === 'platform'
+      ? maxPlatformCount
+      : breakdownMode === 'harmonized'
+      ? maxHarmonizedVal
+      : maxSensorVal;
   const yTicks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => Math.round(effectiveMax * ratio));
 
   const platformColors: Record<PlatformId, string> = {
@@ -82,6 +102,10 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
           <span className="px-2 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-muted)]">
             {breakdownMode === 'platform'
               ? 'Unit: Records / Platform'
+              : breakdownMode === 'harmonized'
+              ? query.metric === 'frp_mw'
+                ? 'Unit: 2-Sat MODIS-Eq FRP (MW)'
+                : 'Unit: 2-Sat MODIS-Eq Detections'
               : query.metric === 'frp_mw'
               ? 'Unit: Observed FRP (MW)'
               : 'Unit: Observation Records'}
@@ -129,6 +153,17 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
           >
             5-Platform Split
           </button>
+          <button
+            type="button"
+            onClick={() => setBreakdownMode('harmonized')}
+            className={`px-2.5 py-1 rounded font-medium transition-colors ${
+              breakdownMode === 'harmonized'
+                ? 'bg-[var(--surface-1)] text-[var(--text-primary)] shadow-xs'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            Harmonized Bridge (M3)
+          </button>
         </div>
       </div>
 
@@ -146,6 +181,27 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
               <span className="w-3 h-3 bg-[var(--viirs-fill)] inline-block rounded-full" />
               <span className="text-[var(--text-primary)] font-medium">
                 VIIRS (S-NPP + NOAA-20 + NOAA-21 · 375 m C2)
+              </span>
+            </div>
+          </div>
+        ) : breakdownMode === 'harmonized' ? (
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 bg-[var(--success)] inline-block rounded-[1px]" />
+              <span className="text-[var(--text-primary)] font-medium">
+                Bridged MODIS-Eq (2-Sat Standard ±80% PI)
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 bg-[var(--modis-fill)] inline-block rounded-[1px]" />
+              <span className="text-[var(--text-primary)] font-medium">
+                Observed MODIS
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 bg-[var(--viirs-fill)]/75 border border-[var(--viirs)] inline-block rounded-[1px]" />
+              <span className="text-[var(--text-primary)] font-medium">
+                VIIRS Calibrated Bridge
               </span>
             </div>
           </div>
@@ -168,6 +224,81 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
           </div>
         )}
       </div>
+
+      {/* Empirical M3 Bridge Validation Diagnostics Strip */}
+      {breakdownMode === 'harmonized' && diag && (
+        <div className="rounded border border-[var(--border-subtle)] bg-[var(--surface-2)]/45 px-3 py-2 flex flex-wrap items-center justify-between gap-3 text-[11px]">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            <div>
+              <span className="text-[var(--text-muted)] mr-1.5">Overlap Bins:</span>
+              <span className="font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                {diag.active_overlap_bin_count}
+              </span>
+              <span className="text-[var(--text-muted)] ml-1">
+                ({diag.calibration_mode === 'OLS_LOG_BRIDGE' ? 'Log OLS' : diag.calibration_mode === 'ROBUST_MEDIAN_RATIO' ? 'Median Ratio' : 'Uncalibrated'})
+              </span>
+            </div>
+            <div>
+              <span className="text-[var(--text-muted)] mr-1.5">Per-Sat Ratio (V/M):</span>
+              <span className="font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                {diag.per_platform_median_ratio !== null
+                  ? `${diag.per_platform_median_ratio}×`
+                  : '—'}
+              </span>
+              {diag.per_platform_iqr_ratio && (
+                <span className="font-mono text-[10px] text-[var(--text-muted)] ml-1 tabular-nums">
+                  [IQR {diag.per_platform_iqr_ratio[0]}–{diag.per_platform_iqr_ratio[1]}×]
+                </span>
+              )}
+              {diag.raw_median_ratio !== null && (
+                <span className="font-mono text-[10px] text-[var(--text-secondary)] ml-1.5 tabular-nums">
+                  (Raw {diag.raw_median_ratio}×)
+                </span>
+              )}
+            </div>
+            <div>
+              <span className="text-[var(--text-muted)] mr-1.5">Log Corr:</span>
+              <span className="font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                {diag.log_pearson_r !== null
+                  ? `r = ${diag.log_pearson_r} · R² = ${diag.log_r_squared}`
+                  : '—'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[var(--text-muted)] mr-1.5">
+                {diag.validation_scheme === 'CHRONOLOGICAL_70_30_HOLDOUT'
+                  ? '70/30 Holdout:'
+                  : diag.validation_scheme === 'LEAVE_ONE_OUT_CV'
+                  ? 'LOOCV Error:'
+                  : 'Validation:'}
+              </span>
+              <span className="font-mono font-semibold text-[var(--text-primary)] tabular-nums">
+                {diag.holdout_mae !== null
+                  ? `MAE ${diag.holdout_mae} · RMSE ${diag.holdout_rmse} (n=${diag.holdout_sample_count})`
+                  : 'Needs ≥4 active overlap bins'}
+              </span>
+            </div>
+          </div>
+
+          <InfoPopover
+            title="Empirical Cross-Sensor Bridge (M3)"
+            triggerLabel="Formula & Caveat"
+            align="right"
+          >
+            <div className="space-y-1.5">
+              <p className="font-mono text-[10px] text-[var(--text-primary)]">
+                {diag.formula_summary}
+              </p>
+              <p className="font-mono text-[10px] text-[var(--text-secondary)]">
+                Fit: α = {diag.alpha_intercept}, β = {diag.beta_slope}, σ_log = {diag.residual_sigma_log}
+              </p>
+              <p className="text-[10px] text-[var(--text-secondary)] leading-snug">
+                {diag.scientific_caveat}
+              </p>
+            </div>
+          </InfoPopover>
+        </div>
+      )}
 
       {/* Calibrated Chart Canvas with Y-Axis Scale & Reference Gridlines */}
       {isLoading ? (
@@ -308,6 +439,60 @@ export const SensorComparisonChart: React.FC<SensorComparisonChartProps> = ({
                           )}
                         </div>
                       )}
+
+                      {!isMissing && breakdownMode === 'harmonized' && (() => {
+                        const pt = harmonizedByKey.get(bin.bin_key);
+                        const bridgedVal = pt?.bridged_modis_equiv ?? null;
+                        const viirsCalibVal = pt?.viirs_calibrated_modis_equiv ?? null;
+                        const modisRawVal = pt?.modis_raw ?? modisVal;
+                        const bridgedH =
+                          bridgedVal !== null
+                            ? Math.min(100, Math.round((bridgedVal / effectiveMax) * 100))
+                            : 0;
+                        const modisH2 = Math.min(100, Math.round((modisRawVal / effectiveMax) * 100));
+                        const vCalH =
+                          viirsCalibVal !== null
+                            ? Math.min(100, Math.round((viirsCalibVal / effectiveMax) * 100))
+                            : 0;
+
+                        return (
+                          <div
+                            className="w-full h-full flex items-end justify-center gap-0.5"
+                            title={
+                              pt
+                                ? `${bin.label} · Bridged MODIS-Eq: ${
+                                    pt.bridged_modis_equiv ?? '—'
+                                  } [80% PI: ${pt.bridged_lower_80 ?? '—'}–${
+                                    pt.bridged_upper_80 ?? '—'
+                                  }] · z*=${pt.composite_robust_z ?? '—'}`
+                                : undefined
+                            }
+                          >
+                            {bridgedVal !== null && (
+                              <div
+                                style={{ height: `${Math.max(bridgedVal > 0 ? 4 : 0, bridgedH)}%` }}
+                                className={`${
+                                  isSparseWindow ? 'w-5' : 'w-2'
+                                } bg-[var(--success)] rounded-t-[1px] transition-all`}
+                              />
+                            )}
+                            <div
+                              style={{ height: `${Math.max(modisRawVal > 0 ? 4 : 0, modisH2)}%` }}
+                              className={`${
+                                isSparseWindow ? 'w-4' : 'w-1.5'
+                              } bg-[var(--modis-fill)] rounded-t-[1px] transition-all`}
+                            />
+                            {viirsCalibVal !== null && (
+                              <div
+                                style={{ height: `${Math.max(viirsCalibVal > 0 ? 4 : 0, vCalH)}%` }}
+                                className={`${
+                                  isSparseWindow ? 'w-4' : 'w-1.5'
+                                } bg-[var(--viirs-fill)]/75 border border-[var(--viirs)] rounded-t-[1px] transition-all`}
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {isMissing && isSparseWindow && (
                         <span className="text-[10px] font-mono text-[var(--text-muted)] self-center">

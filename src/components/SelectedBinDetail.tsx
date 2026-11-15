@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -13,6 +13,7 @@ import {
   CalendarBinRecord,
   CanonicalObservation,
 } from '../types/firescope';
+import { clusterCrossSensorObservations } from '../science/harmonizationScience';
 import { InfoPopover } from './ProgressiveDisclosure';
 
 interface SelectedBinDetailProps {
@@ -54,6 +55,11 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
 
   const modisFrp = selectedBin.frp_summary.MODIS;
   const viirsFrp = selectedBin.frp_summary.VIIRS;
+
+  const coLocation = useMemo(
+    () => clusterCrossSensorObservations(binObservations, 6),
+    [binObservations]
+  );
 
   return (
     <section
@@ -436,6 +442,52 @@ export const SelectedBinDetail: React.FC<SelectedBinDetailProps> = ({
             </div>
           )}
         </div>
+
+        {!isLoadingObservations && binObservations.length > 0 && (
+          <div className="rounded border border-[var(--border-subtle)] bg-[var(--surface-2)]/40 px-3 py-2 flex flex-wrap items-center justify-between gap-3 text-[11px]">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="font-medium text-[var(--text-secondary)]">
+                Cross-Sensor Co-Location:
+              </span>
+              <span className="font-mono text-[var(--text-primary)] tabular-nums">
+                <strong>{coLocation.total_clusters}</strong> clusters
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-[var(--success)]/12 border border-[var(--success)]/30 text-[var(--success)] font-mono tabular-nums">
+                Co-Detected (M+V): {coLocation.co_detected_clusters}
+                {coLocation.empirical_co_detected_viirs_per_modis !== null
+                  ? ` · ${coLocation.empirical_co_detected_viirs_per_modis}× V:M`
+                  : ''}
+              </span>
+              <span className="font-mono text-[var(--viirs)] tabular-nums">
+                VIIRS-Only (375m): {coLocation.viirs_only_clusters}
+              </span>
+              <span className="font-mono text-[var(--modis)] tabular-nums">
+                MODIS-Only (1km): {coLocation.modis_only_clusters}
+              </span>
+            </div>
+
+            <InfoPopover
+              title="Spatiotemporal Cross-Sensor Co-Location"
+              triggerLabel="Clustering rule"
+              align="right"
+            >
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-[var(--text-secondary)] leading-snug">
+                  Groups MODIS (~1 km) and VIIRS (~375 m) pixel detections into physical thermal
+                  clusters within {coLocation.spatial_radius_km_rule} Haversine distance and ±
+                  {coLocation.temporal_window_hours}h overpass separation.
+                </p>
+                {coLocation.co_detected_clusters > 0 && (
+                  <p className="font-mono text-[10px] text-[var(--text-primary)]">
+                    Co-detected totals: MODIS {coLocation.co_detected_modis_obs} obs (
+                    {coLocation.co_detected_modis_frp_mw} MW) · VIIRS{' '}
+                    {coLocation.co_detected_viirs_obs} obs ({coLocation.co_detected_viirs_frp_mw} MW).
+                  </p>
+                )}
+              </div>
+            </InfoPopover>
+          </div>
+        )}
 
         {isLoadingObservations ? (
           <div className="rounded border border-[var(--border-subtle)] p-3 space-y-2">

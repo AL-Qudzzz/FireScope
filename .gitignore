@@ -46,6 +46,7 @@ data/raw/
 *.duckdb
 *.duckdb.wal
 *.duckdb.tmp
+.cache/
 
 # =============================================================================
 # 6. Testing, Coverage & Headless Browser (Playwright) Artifacts

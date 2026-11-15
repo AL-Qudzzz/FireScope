@@ -55,6 +55,31 @@ function triggerCsvDownload(filename: string, csvContent: string) {
   URL.revokeObjectURL(url);
 }
 
+const MONTH_SHORT_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function formatMmDdHuman(mmdd: string): string {
+  const [mStr, dStr] = mmdd.split('-');
+  const mIdx = Number(mStr) - 1;
+  const day = Number(dStr);
+  if (mIdx >= 0 && mIdx < 12 && Number.isFinite(day)) {
+    return `${MONTH_SHORT_NAMES[mIdx]} ${day}`;
+  }
+  return mmdd;
+}
+
 function formatYearRange(
   year: number,
   season: Exclude<SeasonWindowPreset, 'custom'>,
@@ -62,22 +87,28 @@ function formatYearRange(
 ): { start: string; end: string; label: string; granularity: Granularity } {
   const clampEnd = (iso: string) => (iso > liveMaxDate ? liveMaxDate : iso);
   const maxYear = Number(liveMaxDate.slice(0, 4));
-  const maxMmDdLabel = liveMaxDate.slice(5);
+  const maxMmDd = liveMaxDate.slice(5);
+  const maxMmDdHuman = formatMmDdHuman(maxMmDd);
 
   if (season === 'full-year') {
     const end = clampEnd(`${year}-12-31`);
     return {
       start: `${year}-01-01`,
       end,
-      label: year === maxYear && end === liveMaxDate ? `${year} (Jan 1–${maxMmDdLabel})` : `${year} (Full Year)`,
+      label:
+        year === maxYear && end === liveMaxDate
+          ? `${year} (Jan 1–${maxMmDdHuman})`
+          : `${year} (Full Year)`,
       granularity: 'month',
     };
   }
   if (season === 'recent-30d') {
+    const end = clampEnd(`${year}-11-15`);
+    const endHuman = formatMmDdHuman(end.slice(5));
     return {
       start: `${year}-10-15`,
-      end: clampEnd(`${year}-${maxMmDdLabel}`),
-      label: `Oct 15–${maxMmDdLabel}, ${year}`,
+      end,
+      label: `Oct 15–${endHuman}, ${year}`,
       granularity: 'week',
     };
   }
@@ -86,7 +117,10 @@ function formatYearRange(
   return {
     start: `${year}-07-01`,
     end,
-    label: year === maxYear && end === liveMaxDate ? `Jul–${maxMmDdLabel}, ${year}` : `Jul–Nov ${year}`,
+    label:
+      year === maxYear && end === liveMaxDate
+        ? `Jul 1–${maxMmDdHuman}, ${year}`
+        : `Jul–Nov ${year}`,
     granularity: 'month',
   };
 }

@@ -225,6 +225,7 @@ export interface CalendarAnalyticsResponse {
     VIIRS: [number, number, number, number];
   };
   series: CalendarBinRecord[];
+  harmonization?: HarmonizationSummary;
   provenance: {
     sources: string[];
     collections: string[];
@@ -559,4 +560,95 @@ export interface SharedQueryState {
   selectedBinKey: string | null;
   selectedObservationId: string | null;
 }
+
+export type CalendarMetricId = 'detection_count' | 'frp_mw';
+
+export interface HarmonizedBinPoint {
+  bin_key: string;
+  label: string;
+  time_bin_start_utc: string;
+  time_bin_end_utc: string;
+  modis_active_platforms: number;
+  viirs_active_platforms: number;
+  modis_raw: number | null;
+  viirs_raw: number | null;
+  modis_per_platform: number | null;
+  viirs_per_platform: number | null;
+  viirs_calibrated_modis_equiv: number | null;
+  bridged_modis_equiv: number | null;
+  bridged_lower_80: number | null;
+  bridged_upper_80: number | null;
+  bridged_source: 'MODIS_OBSERVED' | 'OVERLAP_BLENDED' | 'VIIRS_CALIBRATED' | 'NO_DATA';
+  modis_robust_z: number | null;
+  viirs_robust_z: number | null;
+  composite_robust_z: number | null;
+}
+
+export interface HarmonizationDiagnostics {
+  method_id: 'M3_EMPIRICAL_PLATFORM_BRIDGE';
+  method_version: '1.0.0';
+  metric_id: CalendarMetricId;
+  calibrated: boolean;
+  calibration_mode: 'OLS_LOG_BRIDGE' | 'ROBUST_MEDIAN_RATIO' | 'PLATFORM_NORMALIZED_ONLY';
+  overlap_bin_count: number;
+  active_overlap_bin_count: number;
+  alpha_intercept: number;
+  beta_slope: number;
+  per_platform_median_ratio: number | null;
+  per_platform_iqr_ratio: [number, number] | null;
+  raw_median_ratio: number | null;
+  log_pearson_r: number | null;
+  log_r_squared: number | null;
+  validation_scheme: 'CHRONOLOGICAL_70_30_HOLDOUT' | 'LEAVE_ONE_OUT_CV' | 'INSUFFICIENT_OVERLAP';
+  holdout_sample_count: number;
+  holdout_mae: number | null;
+  holdout_rmse: number | null;
+  residual_sigma_log: number;
+  formula_summary: string;
+  scientific_caveat: string;
+}
+
+export interface HarmonizationSummary {
+  diagnostics: HarmonizationDiagnostics;
+  points: HarmonizedBinPoint[];
+}
+
+export type CoLocationClassification =
+  | 'CO_DETECTED_BOTH'
+  | 'VIIRS_ONLY_SMALL_OR_GAP'
+  | 'MODIS_ONLY_OVERPASS';
+
+export interface CoLocationCluster {
+  cluster_id: string;
+  classification: CoLocationClassification;
+  centroid_lat: number;
+  centroid_lon: number;
+  earliest_utc: string;
+  latest_utc: string;
+  time_span_minutes: number;
+  modis_count: number;
+  viirs_count: number;
+  viirs_to_modis_ratio: number | null;
+  modis_frp_sum_mw: number;
+  viirs_frp_sum_mw: number;
+  platforms: PlatformId[];
+  observation_ids: string[];
+}
+
+export interface CoLocationSummary {
+  spatial_radius_km_rule: string;
+  temporal_window_hours: number;
+  total_observations: number;
+  total_clusters: number;
+  co_detected_clusters: number;
+  viirs_only_clusters: number;
+  modis_only_clusters: number;
+  co_detected_modis_obs: number;
+  co_detected_viirs_obs: number;
+  empirical_co_detected_viirs_per_modis: number | null;
+  co_detected_modis_frp_mw: number;
+  co_detected_viirs_frp_mw: number;
+  clusters: CoLocationCluster[];
+}
+
 

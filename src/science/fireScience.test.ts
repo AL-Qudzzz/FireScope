@@ -15,7 +15,11 @@ import {
   parseViirsRecord,
   validateBoundingBox,
 } from './fireScience';
-import { AoiDefinition, PlatformRegistryEntry } from '../types/firescope';
+import { AoiDefinition, CalendarBinRecord, PlatformRegistryEntry } from '../types/firescope';
+import {
+  clusterCrossSensorObservations,
+  computeHarmonizedSeries,
+} from './harmonizationScience';
 import {
   canonicalizeEonetEvents,
   isTerrestrialWgs84Coordinate,
@@ -1426,4 +1430,289 @@ test('Concurrent DuckDB Parquet bucket and map-grid queries complete cleanly wit
   assert.ok(results[0].length > 0);
   assert.ok(results[1].length > 0);
   assert.ok(results[2].length > 0);
+});
+
+test('computeHarmonizedSeries normalizes multi-satellite VIIRS eras, fits OLS log bridge with 70/30 holdout, and guards zero-overlap windows', () => {
+  const mkBin = (
+    binKey: string,
+    startDate: string,
+    endDate: string,
+    kViirs: 1 | 2 | 3,
+    modisTotal: number,
+    viirsPerSat: number
+  ): CalendarBinRecord => {
+    const activePlats: CalendarBinRecord['quality']['active_platforms'] = ['TERRA', 'AQUA', 'SNPP'];
+    const pBreakdown: CalendarBinRecord['platform_breakdown'] = {
+      TERRA: Math.floor(modisTotal / 2),
+      AQUA: Math.ceil(modisTotal / 2),
+      SNPP: viirsPerSat,
+      NOAA20: 0,
+      NOAA21: 0,
+    };
+    if (kViirs >= 2) {
+      activePlats.push('NOAA20');
+      pBreakdown.NOAA20 = viirsPerSat;
+    }
+    if (kViirs === 3) {
+      activePlats.push('NOAA21');
+      pBreakdown.NOAA21 = viirsPerSat;
+    }
+    const viirsTotal = kViirs * viirsPerSat;
+    return {
+      bin_key: binKey,
+      label: binKey,
+      time_bin_start_utc: `${startDate}T00:00:00Z`,
+      time_bin_end_utc: `${endDate}T23:59:59Z`,
+      granularity: 'month',
+      coverage_state: 'OBSERVED_ACTIVE',
+      values: { MODIS: modisTotal, VIIRS: viirsTotal },
+      platform_breakdown: pBreakdown,
+      processing_breakdown: { STANDARD: modisTotal + viirsTotal, NRT: 0, RT: 0, URT: 0, UNKNOWN: 0 },
+      frp_summary: {
+        MODIS: {
+          sensor: 'MODIS',
+          unit: 'MW',
+          sum_mw: modisTotal * 25,
+          mean_mw: 25,
+          median_mw: 20,
+          p90_mw: 40,
+          valid_count: modisTotal,
+          null_count: 0,
+          processing_status_note: 'test',
+        },
+        VIIRS: {
+          sensor: 'VIIRS',
+          unit: 'MW',
+          sum_mw: viirsTotal * 10,
+          mean_mw: 10,
+          median_mw: 8,
+          p90_mw: 18,
+          valid_count: viirsTotal,
+          null_count: 0,
+          processing_status_note: 'test',
+        },
+      },
+      confidence_breakdown: {
+        MODIS_numeric_bins: { low_0_29: 0, nominal_30_79: modisTotal, high_80_100: 0 },
+        VIIRS_categorical: { low: 0, nominal: viirsTotal, high: 0 },
+      },
+      pooled_observation_count: modisTotal + viirsTotal,
+      pooled_caveat: 'test',
+      quality: {
+        coverage_note: 'test',
+        active_platforms: activePlats,
+        unavailable_platforms: [],
+        superseded_nrt_count: 0,
+        exact_duplicates_removed: 0,
+      },
+    };
+  };
+
+  // Construct 14 overlap bins spanning 1-, 2-, and 3-satellite VIIRS eras where per-sat ratio = 2.5
+  const bins: CalendarBinRecord[] = [
+    mkBin('2014-08', '2014-08-01', '2014-08-31', 1, 40, 50),
+    mkBin('2014-09', '2014-09-01', '2014-09-30', 1, 80, 100),
+    mkBin('2015-09', '2015-09-01', '2015-09-30', 1, 200, 250),
+    mkBin('2016-09', '2016-09-01', '2016-09-30', 1, 60, 75),
+    mkBin('2019-08', '2019-08-01', '2019-08-31', 2, 100, 125),
+    mkBin('2019-09', '2019-09-01', '2019-09-30', 2, 240, 300),
+    mkBin('2020-09', '2020-09-01', '2020-09-30', 2, 50, 62),
+    mkBin('2021-09', '2021-09-01', '2021-09-30', 2, 70, 88),
+    mkBin('2023-09', '2023-09-01', '2023-09-30', 3, 180, 225),
+    mkBin('2024-09', '2024-09-01', '2024-09-30', 3, 120, 150),
+    mkBin('2025-09', '2025-09-01', '2025-09-30', 3, 90, 112),
+    mkBin('2026-08', '2026-08-01', '2026-08-31', 3, 140, 175),
+    mkBin('2026-09', '2026-09-01', '2026-09-30', 3, 160, 200),
+    mkBin('2026-10', '2026-10-01', '2026-10-31', 3, 30, 38),
+  ];
+
+  const summary = computeHarmonizedSeries(bins, 'detection_count');
+  assert.equal(summary.diagnostics.calibrated, true);
+  assert.equal(summary.diagnostics.calibration_mode, 'OLS_LOG_BRIDGE');
+  assert.equal(summary.diagnostics.validation_scheme, 'CHRONOLOGICAL_70_30_HOLDOUT');
+  assert.equal(summary.diagnostics.active_overlap_bin_count, 14);
+  assert.ok(summary.diagnostics.log_pearson_r !== null && summary.diagnostics.log_pearson_r > 0.99);
+  assert.ok(summary.diagnostics.per_platform_median_ratio !== null);
+  assert.ok(
+    Math.abs(summary.diagnostics.per_platform_median_ratio - 2.5) < 0.1,
+    `Expected per-sat ratio ~2.5 despite 1/2/3 VIIRS satellite expansion, got ${summary.diagnostics.per_platform_median_ratio}`
+  );
+  assert.ok(summary.diagnostics.holdout_mae !== null && summary.diagnostics.holdout_mae < 5);
+
+  // Confirm raw counts were preserved without mutation and 80% prediction interval brackets estimate
+  assert.equal(summary.points[0].modis_raw, 40);
+  assert.equal(summary.points[0].viirs_raw, 50);
+  assert.equal(summary.points[12].viirs_raw, 600);
+  for (const pt of summary.points) {
+    assert.ok(pt.bridged_modis_equiv !== null && pt.bridged_lower_80 !== null && pt.bridged_upper_80 !== null);
+    assert.ok(pt.bridged_lower_80 <= pt.bridged_modis_equiv + 1e-6);
+    assert.ok(pt.bridged_modis_equiv <= pt.bridged_upper_80 + 1e-6);
+  }
+
+  // Zero-overlap guard: must refuse to invent uncalibrated cross-sensor scaling
+  const viirsOnlyBin: CalendarBinRecord = {
+    ...mkBin('2026-11-12', '2026-11-12', '2026-11-12', 2, 0, 20),
+    values: { MODIS: null, VIIRS: 40 },
+    platform_breakdown: { TERRA: 0, AQUA: 0, SNPP: 0, NOAA20: 20, NOAA21: 20 },
+  };
+  const uncalibrated = computeHarmonizedSeries([viirsOnlyBin], 'detection_count');
+  assert.equal(uncalibrated.diagnostics.calibrated, false);
+  assert.equal(uncalibrated.diagnostics.calibration_mode, 'PLATFORM_NORMALIZED_ONLY');
+  assert.equal(uncalibrated.points[0].viirs_calibrated_modis_equiv, null);
+});
+
+test('clusterCrossSensorObservations groups co-located MODIS+VIIRS thermal events and separates distant/temporal outliers', () => {
+  const mCo = parseModisRecord(
+    {
+      latitude: -2.2,
+      longitude: 114.0,
+      brightness: 325,
+      scan: 1.0,
+      track: 1.0,
+      acq_date: '2026-10-15',
+      acq_time: '0330',
+      satellite: 'T',
+      confidence: 82,
+      version: '6.1',
+      bright_t31: 295,
+      frp: 45,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'test-sha', rowNumber: 1 }
+  );
+  // Two VIIRS detections within ~0.5 km and 2h of mCo -> CO_DETECTED_BOTH
+  const vCo1 = parseViirsRecord(
+    {
+      latitude: -2.203,
+      longitude: 114.002,
+      bright_ti4: 335,
+      scan: 0.4,
+      track: 0.4,
+      acq_date: '2026-10-15',
+      acq_time: '0520',
+      satellite: 'N20',
+      instrument: 'VIIRS',
+      confidence: 'h',
+      version: '2.0NRT',
+      bright_ti5: 292,
+      frp: 12,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'test-sha', rowNumber: 2 }
+  );
+  const vCo2 = parseViirsRecord(
+    {
+      latitude: -2.198,
+      longitude: 113.997,
+      bright_ti4: 332,
+      scan: 0.4,
+      track: 0.4,
+      acq_date: '2026-10-15',
+      acq_time: '0521',
+      satellite: 'N21',
+      instrument: 'VIIRS',
+      confidence: 'n',
+      version: '2.0NRT',
+      bright_ti5: 291,
+      frp: 8,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'test-sha', rowNumber: 3 }
+  );
+  // Distant small fire (~15 km away) -> VIIRS_ONLY_SMALL_OR_GAP
+  const vFar = parseViirsRecord(
+    {
+      latitude: -2.35,
+      longitude: 114.15,
+      bright_ti4: 328,
+      scan: 0.4,
+      track: 0.4,
+      acq_date: '2026-10-15',
+      acq_time: '0522',
+      satellite: 'N20',
+      instrument: 'VIIRS',
+      confidence: 'n',
+      version: '2.0NRT',
+      bright_ti5: 290,
+      frp: 5,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'test-sha', rowNumber: 4 }
+  );
+  // Same location as mCo but >8h later (outside +-6h window) -> MODIS_ONLY_OVERPASS
+  const mLate = parseModisRecord(
+    {
+      latitude: -2.2,
+      longitude: 114.0,
+      brightness: 321,
+      scan: 1.0,
+      track: 1.0,
+      acq_date: '2026-10-15',
+      acq_time: '1400',
+      satellite: 'A',
+      confidence: 75,
+      version: '6.1',
+      bright_t31: 294,
+      frp: 30,
+      daynight: 'D',
+    },
+    { retrievedAtUtc: '2026-11-15T00:00:00Z', checksum: 'test-sha', rowNumber: 5 }
+  );
+
+  const summary = clusterCrossSensorObservations([mCo, vCo1, vCo2, vFar, mLate], 6);
+  assert.equal(summary.total_observations, 5);
+  assert.equal(summary.total_clusters, 3);
+  assert.equal(summary.co_detected_clusters, 1);
+  assert.equal(summary.viirs_only_clusters, 1);
+  assert.equal(summary.modis_only_clusters, 1);
+  assert.equal(summary.empirical_co_detected_viirs_per_modis, 2);
+  assert.equal(summary.co_detected_modis_frp_mw, 45);
+  assert.equal(summary.co_detected_viirs_frp_mw, 20);
+});
+
+test('globalPresetsService loads real compressed NASA FIRMS global archive cleanly', async () => {
+  const {
+    getGlobalPresetsManifest,
+    queryGlobalPresetBuckets,
+    queryGlobalPresetObservations,
+  } = await import('../services/globalPresetsService');
+  const manifest = getGlobalPresetsManifest();
+  assert.ok(manifest && manifest.available, 'global_presets_nasa.json.gz manifest must be available');
+  assert.ok(manifest.canonical_rows_total > 600_000);
+  assert.ok(manifest.aoi_ids.includes('california-sierra'));
+  assert.ok(manifest.aoi_ids.includes('para-amazon'));
+  assert.ok(manifest.aoi_ids.includes('congo-zambezi-africa'));
+  assert.ok(manifest.aoi_ids.includes('kakadu-savanna'));
+
+  const caBuckets = queryGlobalPresetBuckets({
+    bbox: { west: -122.2, south: 39.2, east: -120.4, north: 40.6 },
+    startDate: '2026-10-01',
+    endDate: '2026-11-15',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    modisMinConfidence: 0,
+    viirsCategories: ['low', 'nominal', 'high'],
+  });
+  const totalCa = caBuckets.reduce((acc, b) => acc + b.detection_count, 0);
+  assert.ok(totalCa > 500, `Expected >500 real NASA California detections, got ${totalCa}`);
+
+  const caObs = queryGlobalPresetObservations({
+    aoi: {
+      id: 'california-sierra',
+      name: 'CA',
+      regionLabel: 'US',
+      description: '',
+      geometryType: 'BBOX',
+      bbox: { west: -122.2, south: 39.2, east: -120.4, north: 40.6 },
+      timezone: 'UTC',
+      utcOffsetLabel: 'UTC',
+      areaSqKm: 24180,
+      biome: 'Conifer',
+    },
+    startDate: '2026-10-01',
+    endDate: '2026-11-15',
+  });
+  assert.ok(caObs.length > 100);
 });

@@ -7,6 +7,7 @@ import {
   SensorId,
 } from '../types/firescope';
 import {
+  deduplicateAndSupersedeObservations,
   deriveProcessingStatus,
   isOffshoreMarineObservation,
   isPointInAoi,
@@ -590,8 +591,452 @@ export async function fetchFirmsAreaApiWithKey(params: {
 
   for (const r of results) {
     if (r.status === 'fulfilled') {
-      all.push(...r.value);
+      const vals = r.value;
+      for (let i = 0; i < vals.length; i++) {
+        all.push(vals[i]);
+      }
     }
   }
   return all;
+}
+
+interface AreaSourceSpec {
+  sourceName: string;
+  sensor: SensorId;
+  defaultPlatform: PlatformId;
+  sourceProduct: string;
+  collection: string;
+  minDate: string;
+  maxDate: string;
+  isNrt: boolean;
+}
+
+const DEFAULT_AREA_SOURCE_SPECS: AreaSourceSpec[] = [
+  {
+    sourceName: 'MODIS_SP',
+    sensor: 'MODIS',
+    defaultPlatform: 'TERRA',
+    sourceProduct: 'MCD14ML',
+    collection: 'MODIS C6.1',
+    minDate: '2000-11-01',
+    maxDate: '2026-08-31',
+    isNrt: false,
+  },
+  {
+    sourceName: 'MODIS_NRT',
+    sensor: 'MODIS',
+    defaultPlatform: 'TERRA',
+    sourceProduct: 'MCD14DL_NRT',
+    collection: 'MODIS C6.1',
+    minDate: '2026-09-01',
+    maxDate: '2099-12-31',
+    isNrt: true,
+  },
+  {
+    sourceName: 'VIIRS_SNPP_SP',
+    sensor: 'VIIRS',
+    defaultPlatform: 'SNPP',
+    sourceProduct: 'VNP14IMGML',
+    collection: 'VIIRS C2',
+    minDate: '2012-01-20',
+    maxDate: '2026-07-31',
+    isNrt: false,
+  },
+  {
+    sourceName: 'VIIRS_SNPP_NRT',
+    sensor: 'VIIRS',
+    defaultPlatform: 'SNPP',
+    sourceProduct: 'VNP14IMGTDL_NRT',
+    collection: 'VIIRS C2',
+    minDate: '2026-08-01',
+    maxDate: '2026-11-02',
+    isNrt: true,
+  },
+  {
+    sourceName: 'VIIRS_NOAA20_SP',
+    sensor: 'VIIRS',
+    defaultPlatform: 'NOAA20',
+    sourceProduct: 'VJ114IMGML',
+    collection: 'VIIRS C2',
+    minDate: '2018-04-01',
+    maxDate: '2026-07-31',
+    isNrt: false,
+  },
+  {
+    sourceName: 'VIIRS_NOAA20_NRT',
+    sensor: 'VIIRS',
+    defaultPlatform: 'NOAA20',
+    sourceProduct: 'VJ114IMGTDL_NRT',
+    collection: 'VIIRS C2',
+    minDate: '2026-08-01',
+    maxDate: '2099-12-31',
+    isNrt: true,
+  },
+  {
+    sourceName: 'VIIRS_NOAA21_SP',
+    sensor: 'VIIRS',
+    defaultPlatform: 'NOAA21',
+    sourceProduct: 'VJ214IMGML',
+    collection: 'VIIRS C2',
+    minDate: '2023-03-01',
+    maxDate: '2026-07-31',
+    isNrt: false,
+  },
+  {
+    sourceName: 'VIIRS_NOAA21_NRT',
+    sensor: 'VIIRS',
+    defaultPlatform: 'NOAA21',
+    sourceProduct: 'VJ214IMGTDL_NRT',
+    collection: 'VIIRS C2',
+    minDate: '2024-01-17',
+    maxDate: '2099-12-31',
+    isNrt: true,
+  },
+];
+
+interface CachedAreaChunkEntry {
+  csvText: string;
+  checksum: string;
+  retrievedAtUtc: string;
+}
+
+const memoryAreaChunkCache = new Map<string, CachedAreaChunkEntry>();
+let diskCacheLoaded = false;
+let diskCacheFileLoaded: string | null = null;
+let cachedAvailability: { checkedAtMs: number; specs: AreaSourceSpec[] } | null = null;
+
+function shiftUtcDateStr(dateStr: string, deltaDays: number): string {
+  const ms = Date.parse(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(ms)) return dateStr;
+  return new Date(ms + deltaDays * 86400000).toISOString().slice(0, 10);
+}
+
+function diffUtcDaysInclusive(startDate: string, endDate: string): number {
+  const s = Date.parse(`${startDate}T00:00:00Z`);
+  const e = Date.parse(`${endDate}T00:00:00Z`);
+  if (Number.isNaN(s) || Number.isNaN(e) || e < s) return 0;
+  return Math.floor((e - s) / 86400000) + 1;
+}
+
+async function getAreaSourceSpecs(mapKey: string): Promise<AreaSourceSpec[]> {
+  const now = Date.now();
+  if (cachedAvailability && now - cachedAvailability.checkedAtMs < 3600_000) {
+    return cachedAvailability.specs;
+  }
+
+  const specs = DEFAULT_AREA_SOURCE_SPECS.map((s) => ({ ...s }));
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const url = `https://firms.modaps.eosdis.nasa.gov/api/data_availability/csv/${encodeURIComponent(mapKey)}/all`;
+      const res = await fetch(url, { signal: controller.signal });
+      if (res.ok) {
+        const text = await res.text();
+        const lines = text.trim().split(/\r?\n/);
+        if (lines.length > 1) {
+          const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+          const idxId = headers.indexOf('data_id');
+          const idxMin = headers.indexOf('min_date');
+          const idxMax = headers.indexOf('max_date');
+          if (idxId !== -1 && idxMin !== -1 && idxMax !== -1) {
+            const availMap = new Map<string, { min: string; max: string }>();
+            for (let i = 1; i < lines.length; i++) {
+              const cols = lines[i].split(',').map((c) => c.trim());
+              const id = cols[idxId];
+              const minD = cols[idxMin];
+              const maxD = cols[idxMax];
+              if (id && /^\d{4}-\d{2}-\d{2}$/.test(minD) && /^\d{4}-\d{2}-\d{2}$/.test(maxD)) {
+                availMap.set(id, { min: minD, max: maxD });
+              }
+            }
+            for (const spec of specs) {
+              const live = availMap.get(spec.sourceName);
+              if (live) {
+                spec.minDate = live.min;
+                // Keep SNPP closed at NASA's reported maxDate; allow other NRT feeds slightly past lag
+                spec.maxDate = live.max;
+              }
+            }
+          }
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // Fall back silently to DEFAULT_AREA_SOURCE_SPECS
+  }
+
+  cachedAvailability = { checkedAtMs: now, specs };
+  return specs;
+}
+
+async function ensureDiskAreaCacheLoaded(cacheFilePath?: string): Promise<void> {
+  if (!cacheFilePath) return;
+  if (diskCacheLoaded && diskCacheFileLoaded === cacheFilePath) return;
+  try {
+    const fs = await import('node:fs/promises');
+    const raw = await fs.readFile(cacheFilePath, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, CachedAreaChunkEntry>;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v && typeof v.csvText === 'string' && !memoryAreaChunkCache.has(k)) {
+        memoryAreaChunkCache.set(k, v);
+      }
+    }
+  } catch {
+    // No disk cache yet or non-Node environment
+  }
+  diskCacheLoaded = true;
+  diskCacheFileLoaded = cacheFilePath;
+}
+
+async function persistDiskAreaCache(cacheFilePath?: string): Promise<void> {
+  if (!cacheFilePath) return;
+  try {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    await fs.mkdir(path.dirname(cacheFilePath), { recursive: true });
+    const obj: Record<string, CachedAreaChunkEntry> = {};
+    for (const [k, v] of memoryAreaChunkCache.entries()) {
+      obj[k] = v;
+    }
+    await fs.writeFile(cacheFilePath, JSON.stringify(obj), 'utf8');
+  } catch {
+    // Ignore cache write failures cleanly
+  }
+}
+
+export interface FirmsAreaRangeParams {
+  mapKey: string;
+  bbox: { west: number; south: number; east: number; north: number };
+  startDate: string;
+  endDate: string;
+  sensor?: SensorFilter;
+  platforms?: PlatformId[];
+  maxWindowDays?: number;
+  cacheFilePath?: string;
+  concurrency?: number;
+  hashFn?: (text: string) => string;
+}
+
+export interface FirmsAreaRangeResult {
+  observations: CanonicalObservation[];
+  feedStats: FirmsFeedSyncStat[];
+  truncated: boolean;
+  requestedStartDate: string;
+  effectiveStartDate: string;
+  endDate: string;
+  cacheHits: number;
+  apiCalls: number;
+}
+
+/**
+ * Queries official NASA FIRMS Area API across Standard Processing (_SP) and Near Real-Time (_NRT)
+ * collections using accurate 5-day chunk start dates (`/{dayRange}/{chunkStartDate}`), caching
+ * every chunk in memory and optional JSON disk storage, and deduplicating/superseding NRT with STANDARD.
+ */
+export async function fetchFirmsAreaRangeWithKey(
+  params: FirmsAreaRangeParams
+): Promise<FirmsAreaRangeResult> {
+  const {
+    mapKey,
+    bbox,
+    startDate,
+    endDate,
+    sensor = 'ALL',
+    platforms,
+    maxWindowDays = 45,
+    cacheFilePath,
+    concurrency = 3,
+    hashFn,
+  } = params;
+
+  await ensureDiskAreaCacheLoaded(cacheFilePath);
+
+  const totalDays = diffUtcDaysInclusive(startDate, endDate);
+  if (totalDays <= 0) {
+    return {
+      observations: [],
+      feedStats: [],
+      truncated: false,
+      requestedStartDate: startDate,
+      effectiveStartDate: startDate,
+      endDate,
+      cacheHits: 0,
+      apiCalls: 0,
+    };
+  }
+
+  const truncated = totalDays > maxWindowDays;
+  const effectiveStartDate = truncated
+    ? shiftUtcDateStr(endDate, -(maxWindowDays - 1))
+    : startDate;
+
+  const areaStr = `${bbox.west.toFixed(3)},${bbox.south.toFixed(3)},${bbox.east.toFixed(3)},${bbox.north.toFixed(3)}`;
+  const specs = await getAreaSourceSpecs(mapKey);
+
+  // Filter sources matching requested sensor & platforms
+  const activePlatformSet = platforms && platforms.length > 0 ? new Set(platforms) : null;
+  const candidateSpecs = specs.filter((spec) => {
+    if (sensor !== 'ALL' && spec.sensor !== sensor) return false;
+    if (activePlatformSet) {
+      if (spec.sensor === 'MODIS') {
+        if (!activePlatformSet.has('TERRA') && !activePlatformSet.has('AQUA')) return false;
+      } else if (!activePlatformSet.has(spec.defaultPlatform)) {
+        return false;
+      }
+    }
+    return effectiveStartDate <= spec.maxDate && endDate >= spec.minDate;
+  });
+
+  // Build 5-day chunks within effective window
+  const chunks: Array<{ start: string; end: string; days: number }> = [];
+  let cursor = effectiveStartDate;
+  while (cursor <= endDate) {
+    const remaining = diffUtcDaysInclusive(cursor, endDate);
+    const days = Math.min(5, remaining);
+    const chunkEnd = shiftUtcDateStr(cursor, days - 1);
+    chunks.push({ start: cursor, end: chunkEnd, days });
+    cursor = shiftUtcDateStr(chunkEnd, 1);
+  }
+
+  // Pair each chunk only with sources that cover it, preferring SP when SP fully covers the chunk
+  const tasks: Array<{
+    spec: AreaSourceSpec;
+    chunk: { start: string; end: string; days: number };
+    cacheKey: string;
+  }> = [];
+
+  for (const chunk of chunks) {
+    const spModisCoversFull = candidateSpecs.some(
+      (s) =>
+        s.sourceName === 'MODIS_SP' && chunk.start >= s.minDate && chunk.end <= s.maxDate
+    );
+
+    for (const spec of candidateSpecs) {
+      if (chunk.end < spec.minDate || chunk.start > spec.maxDate) continue;
+      // Avoid duplicate NRT request if SP already covers the entire 5-day chunk for the same sensor/platform
+      if (spec.sourceName === 'MODIS_NRT' && spModisCoversFull) continue;
+      if (spec.isNrt && spec.sensor === 'VIIRS') {
+        const correspondingSp = candidateSpecs.find(
+          (s) =>
+            !s.isNrt &&
+            s.sensor === 'VIIRS' &&
+            s.defaultPlatform === spec.defaultPlatform &&
+            chunk.start >= s.minDate &&
+            chunk.end <= s.maxDate
+        );
+        if (correspondingSp) continue;
+      }
+      const cacheKey = `${spec.sourceName}|${areaStr}|${chunk.start}|${chunk.days}`;
+      tasks.push({ spec, chunk, cacheKey });
+    }
+  }
+
+  const rawParsed: CanonicalObservation[] = [];
+  const feedRowCounts = new Map<string, { spec: AreaSourceSpec; count: number; checksum: string; url: string }>();
+  let cacheHits = 0;
+  let apiCalls = 0;
+  let wroteNewCache = false;
+
+  // Bounded worker queue so NASA API rate limits & sockets stay healthy
+  let taskIdx = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, tasks.length));
+
+  const runWorker = async () => {
+    while (true) {
+      const idx = taskIdx++;
+      if (idx >= tasks.length) break;
+      const { spec, chunk, cacheKey } = tasks[idx];
+      const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${encodeURIComponent(mapKey)}/${spec.sourceName}/${areaStr}/${chunk.days}/${chunk.start}`;
+      const redactedUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/${spec.sourceName}/${areaStr}/${chunk.days}/${chunk.start}`;
+
+      let entry = memoryAreaChunkCache.get(cacheKey);
+      if (entry) {
+        cacheHits += 1;
+      } else {
+        apiCalls += 1;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20000);
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          if (res.ok) {
+            const text = await res.text();
+            // Do not cache FIRMS error banners accidentally returned as 200 text
+            if (text.startsWith('Invalid ') || text.startsWith('Error ')) {
+              continue;
+            }
+            const retrievedAtUtc = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+            const checksum = hashFn ? hashFn(text) : `firms-area-${spec.sourceName}-${chunk.start}`;
+            entry = { csvText: text, checksum, retrievedAtUtc };
+            memoryAreaChunkCache.set(cacheKey, entry);
+            wroteNewCache = true;
+          }
+        } catch {
+          // Swallow transient single-chunk timeout; other chunks/sources still return
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      if (entry && entry.csvText.trim().length > 0) {
+        const parsed = parseFirmsActiveFireCsv(entry.csvText, {
+          sensor: spec.sensor,
+          defaultPlatform: spec.defaultPlatform,
+          sourceProduct: spec.sourceProduct,
+          collection: spec.collection,
+          retrievedAtUtc: entry.retrievedAtUtc,
+          checksum: entry.checksum,
+        });
+        for (let i = 0; i < parsed.length; i++) {
+          rawParsed.push(parsed[i]);
+        }
+        const prev = feedRowCounts.get(spec.sourceName);
+        if (prev) {
+          prev.count += parsed.length;
+        } else {
+          feedRowCounts.set(spec.sourceName, {
+            spec,
+            count: parsed.length,
+            checksum: entry.checksum,
+            url: redactedUrl,
+          });
+        }
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+
+  if (wroteNewCache) {
+    await persistDiskAreaCache(cacheFilePath);
+  }
+
+  // Deduplicate & supersede NRT with STANDARD when straddling cutoffs
+  const deduped = deduplicateAndSupersedeObservations(rawParsed);
+  const filtered = deduped.canonical.filter(
+    (obs) => obs.acq_date >= effectiveStartDate && obs.acq_date <= endDate
+  );
+
+  const feedStats: FirmsFeedSyncStat[] = Array.from(feedRowCounts.values()).map((v) => ({
+    id: `area-${v.spec.sourceName.toLowerCase()}`,
+    product: v.spec.sourceProduct,
+    platform:
+      v.spec.sensor === 'MODIS' ? 'TERRA/AQUA' : v.spec.defaultPlatform,
+    row_count: v.count,
+    sha256: v.checksum,
+    source_url: v.url,
+  }));
+
+  return {
+    observations: filtered,
+    feedStats,
+    truncated,
+    requestedStartDate: startDate,
+    effectiveStartDate,
+    endDate,
+    cacheHits,
+    apiCalls,
+  };
 }

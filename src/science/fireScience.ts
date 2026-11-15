@@ -15,6 +15,7 @@ import {
   SensorFilter,
   SensorId,
 } from '../types/firescope';
+import { computeHarmonizedSeries } from './harmonizationScience';
 
 /**
  * Parses FIRMS acquisition date (YYYY-MM-DD) and native HHMM time (e.g. "42", "0342", "1415")
@@ -1180,6 +1181,7 @@ export function aggregateCalendarAnalytics(params: {
       VIIRS: thresholdsViirs,
     },
     series,
+    harmonization: computeHarmonizedSeries(series, metric),
     provenance: {
       sources: ['NASA FIRMS Archive Snapshot', 'MODIS Collection 6.1', 'VIIRS 375m Collection 2'],
       collections: ['MODIS C6.1 (MCD14DL / MCD14ML)', 'VIIRS C2 (VNP14IMGTDL / VJ114IMGTDL / VJ214IMGTDL)'],

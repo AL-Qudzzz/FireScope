@@ -28,6 +28,7 @@ import {
   isPlatformAvailableInWindow,
   isPointInAoi,
 } from './fireScience';
+import { computeHarmonizedSeries } from './harmonizationScience';
 
 /**
  * Unified daily bucket interface shared by DuckDB Parquet aggregates and live/fixture records.
@@ -583,6 +584,7 @@ export function aggregateCalendarFromBuckets(params: {
       ),
     },
     series,
+    harmonization: computeHarmonizedSeries(series, metric),
     provenance: {
       sources,
       collections: [
