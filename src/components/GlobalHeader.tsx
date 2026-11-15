@@ -13,6 +13,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { AoiDefinition, DataStatusResponse, SharedQueryState } from '../types/firescope';
+import { FireScopeHeaderBrand } from './BrandLogo';
 
 export type AppRoute = 'map' | 'analysis' | 'data-sources' | 'methodology' | 'about';
 
@@ -71,15 +72,9 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('map')}
-          className="flex items-center gap-2 text-left rounded px-1 py-1 shrink-0"
+          className="flex items-center gap-2 text-left rounded px-1 py-1 shrink-0 focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
         >
-          <span
-            aria-hidden="true"
-            className="w-2.5 h-2.5 border-[1.5px] border-[var(--ember)] bg-[var(--ember)]/20 inline-block shrink-0"
-          />
-          <span className="text-[15px] sm:text-[16px] font-semibold tracking-tight text-[var(--text-primary)] whitespace-nowrap">
-            FireScope
-          </span>
+          <FireScopeHeaderBrand />
         </button>
 
         <span className="hidden md:inline text-[var(--border-subtle)] shrink-0" aria-hidden="true">

@@ -1,3 +1,7 @@
+<p align="left">
+  <img src="public/brand/firescope-lockup.svg" alt="FireScope — Active Fire Intelligence & AOI Burning-Activity Calendar" height="56" />
+</p>
+
 # FireScope — Active Fire Intelligence & AOI Burning-Activity Calendar
 
 **Challenge:** NASA Space Apps 2026 — Harmonization of MODIS and VIIRS Hot Spots  
@@ -51,6 +55,8 @@ Rather than flattening distinct satellite sensors into an unvalidated single num
 .
 ├── server.ts                        # Express + Vite middleware server (port 3000) & REST API (/api/v1/*)
 ├── index.html                       # Web app entry HTML
+├── public/
+│   └── brand/                       # Custom FireScope SVG brand marks, adaptive wordmark & lockup
 ├── vite.config.ts                   # Vite + React + Tailwind v4 configuration
 ├── tsconfig.json                    # Strict TypeScript compiler configuration
 ├── package.json                     # Dependencies and npm scripts
@@ -113,6 +119,7 @@ Rather than flattening distinct satellite sensors into an unvalidated single num
     ├── utils/
     │   └── savedAois.ts             # LocalStorage persistence helper for custom Saved AOIs
     └── components/
+        ├── BrandLogo.tsx
         ├── GlobalHeader.tsx
         ├── PrimaryNavigationDrawer.tsx
         ├── MapCanvas.tsx

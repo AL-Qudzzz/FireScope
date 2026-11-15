@@ -2,6 +2,7 @@ import React from 'react';
 import { Database, FileCheck2 } from 'lucide-react';
 import { DataStatusResponse } from '../types/firescope';
 import { DisclosureAccordion, InfoPopover } from './ProgressiveDisclosure';
+import { FireScopeLockup } from './BrandLogo';
 
 export const DataSourcesView: React.FC<{ dataStatus: DataStatusResponse }> = ({
   dataStatus,
@@ -473,6 +474,7 @@ export const AboutView: React.FC<{ dataStatus?: DataStatusResponse }> = ({
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-6">
       <div className="pb-4 border-b border-[var(--border-subtle)]">
+        <FireScopeLockup className="h-9 sm:h-10 w-auto mb-2.5" />
         <h1 className="text-[20px] font-semibold text-[var(--text-primary)]">
           About FireScope &amp; NASA Data Attribution
         </h1>

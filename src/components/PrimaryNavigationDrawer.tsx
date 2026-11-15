@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { AppRoute } from './GlobalHeader';
+import { FireScopeLockup } from './BrandLogo';
 import { PRESET_AOIS } from '../data/firmsArchiveData';
 import { AoiDefinition } from '../types/firescope';
 
@@ -108,8 +109,9 @@ export const PrimaryNavigationDrawer: React.FC<PrimaryNavigationDrawerProps> = (
         <div className="p-4 space-y-5 overflow-y-auto flex-1">
           <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
             <div>
-              <div className="text-[16px] font-semibold text-[var(--text-primary)]">
-                FireScope
+              <div className="mb-1">
+                <FireScopeLockup className="h-7 w-auto" />
+                <span className="sr-only">FireScope</span>
               </div>
               <div className="text-[12px] text-[var(--text-secondary)]">
                 Field Atlas · Active-Fire Observation Analysis
