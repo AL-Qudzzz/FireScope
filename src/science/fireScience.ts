@@ -20,7 +20,12 @@ import {
   SensorId,
   ViirsPlatformNormalizationSummary,
 } from '../types/firescope';
-import { computeHarmonizedSeries, computePlatformExposure } from './harmonizationScience';
+import {
+  computeHarmonizedSeries,
+  computePlatformExposure,
+  getInclusiveUtcEndDate,
+  PlatformCoverageWindow,
+} from './harmonizationScience';
 
 export const PRODUCTION_ALLOWED_METHODS: readonly MethodLevelId[] = [
   'M0_RAW',
@@ -246,6 +251,8 @@ export function computeViirsPlatformNormalization(
         startDate?: string;
         endDate?: string;
         coveredDateWindows?: Array<{ start: string; end: string }>;
+        platformCoverageWindows?: PlatformCoverageWindow[];
+        requireVerifiedCoverage?: boolean;
       }
 ): ViirsPlatformNormalizationSummary {
   const series = Array.isArray(seriesOrParams)
@@ -260,6 +267,11 @@ export function computeViirsPlatformNormalization(
   const coveredDateWindows = Array.isArray(seriesOrParams)
     ? undefined
     : seriesOrParams.coveredDateWindows;
+  const platformCoverageWindows = Array.isArray(seriesOrParams)
+    ? undefined
+    : seriesOrParams.platformCoverageWindows;
+  const requireVerifiedCoverage =
+    !Array.isArray(seriesOrParams) && seriesOrParams.requireVerifiedCoverage === true;
 
   const perPlatformCounts = { SNPP: 0, NOAA20: 0, NOAA21: 0 };
   const perPlatformCoveredBins = { SNPP: 0, NOAA20: 0, NOAA21: 0 };
@@ -271,6 +283,7 @@ export function computeViirsPlatformNormalization(
   let totalEligibleDays = 0;
   let totalViirsPlatformDays = 0;
   let totalViirsDetections = 0;
+  let hasUnverifiedCoverage = false;
 
   for (const bin of series) {
     bin.m3_status = 'M3_DISABLED';
@@ -279,7 +292,9 @@ export function computeViirsPlatformNormalization(
       bin.coverage_state !== 'COVERAGE_UNKNOWN';
 
     const binStart = bin.time_bin_start_utc?.slice(0, 10) ?? '2020-01-01';
-    const binEnd = bin.time_bin_end_utc?.slice(0, 10) ?? binStart;
+    const binEnd = bin.time_bin_end_utc
+      ? getInclusiveUtcEndDate(bin.time_bin_end_utc)
+      : binStart;
 
     let activeViirsPlats: Array<'SNPP' | 'NOAA20' | 'NOAA21'> = [];
     if (isCovered) {
@@ -313,13 +328,17 @@ export function computeViirsPlatformNormalization(
 
     const exposure = isCovered
       ? computePlatformExposure(
-          binStart,
-          binEnd,
-          activeViirsPlats.length > 0
-            ? activeViirsPlats
-            : fallbackSelectedPlatforms,
-          bin.platform_breakdown,
-          coveredDateWindows
+          {
+            startUtc: binStart,
+            endUtc: binEnd,
+            selectedPlatforms:
+              activeViirsPlats.length > 0 ? activeViirsPlats : fallbackSelectedPlatforms,
+            observedBreakdown: bin.platform_breakdown,
+            platformRegistry: fallbackRegistry,
+            coveredDateWindows,
+            platformCoverageWindows,
+            requireVerifiedCoverage,
+          }
         )
       : {
           modis_active_platforms: 0,
@@ -329,6 +348,8 @@ export function computeViirsPlatformNormalization(
           viirs_platform_days: 0,
           modis_effective_platform_count: 0,
           viirs_effective_platform_count: 0,
+          modis_coverage_verified: false,
+          viirs_coverage_verified: false,
           per_platform_covered_days: {
             TERRA: 0,
             AQUA: 0,
@@ -347,36 +368,26 @@ export function computeViirsPlatformNormalization(
     bin.k_viirs_active = kViirs;
     bin.eligible_days = exposure.eligible_days;
     bin.viirs_platform_days = exposure.viirs_platform_days;
-    bin.viirs_effective_platform_count =
+    bin.viirs_exposure_status = exposure.viirs_coverage_verified ? 'VERIFIED' : 'UNVERIFIED';
+    bin.viirs_effective_platform_count = exposure.viirs_coverage_verified &&
       exposure.eligible_days > 0 && exposure.viirs_platform_days > 0
         ? exposure.viirs_effective_platform_count
-        : kViirs > 0
+        : exposure.viirs_coverage_verified && kViirs > 0
           ? kViirs
           : null;
 
     if (!isCovered || bin.values?.VIIRS === null || kViirs === 0) {
+      if (isCovered && bin.values?.VIIRS !== null && !exposure.viirs_coverage_verified) {
+        hasUnverifiedCoverage = true;
+      }
       bin.viirs_per_platform = null;
       bin.viirs_per_effective_platform = null;
       continue;
     }
 
     coveredBinsTotal += 1;
-    sumKViirs += kViirs;
-    totalEligibleDays += exposure.eligible_days;
-    totalViirsPlatformDays += exposure.viirs_platform_days;
-    perPlatformCoveredDays.SNPP += exposure.per_platform_covered_days.SNPP;
-    perPlatformCoveredDays.NOAA20 += exposure.per_platform_covered_days.NOAA20;
-    perPlatformCoveredDays.NOAA21 += exposure.per_platform_covered_days.NOAA21;
-
     const vCount = bin.values?.VIIRS ?? 0;
     totalViirsDetections += vCount;
-    const binEffRate =
-      exposure.eligible_days > 0 && exposure.viirs_platform_days > 0
-        ? Number(((vCount * exposure.eligible_days) / exposure.viirs_platform_days).toFixed(2))
-        : Number((vCount / kViirs).toFixed(2));
-    bin.viirs_per_platform = binEffRate;
-    bin.viirs_per_effective_platform = binEffRate;
-
     for (const p of activeViirsPlats) {
       availableViirsSet.add(p);
       perPlatformCoveredBins[p] += 1;
@@ -386,20 +397,42 @@ export function computeViirsPlatformNormalization(
       perPlatformCounts.NOAA20 += bin.platform_breakdown.NOAA20 ?? 0;
       perPlatformCounts.NOAA21 += bin.platform_breakdown.NOAA21 ?? 0;
     }
+    if (!exposure.viirs_coverage_verified) {
+      hasUnverifiedCoverage = true;
+      bin.viirs_per_platform = null;
+      bin.viirs_per_effective_platform = null;
+      continue;
+    }
+
+    sumKViirs += kViirs;
+    totalEligibleDays += exposure.eligible_days;
+    totalViirsPlatformDays += exposure.viirs_platform_days;
+    perPlatformCoveredDays.SNPP += exposure.per_platform_covered_days.SNPP;
+    perPlatformCoveredDays.NOAA20 += exposure.per_platform_covered_days.NOAA20;
+    perPlatformCoveredDays.NOAA21 += exposure.per_platform_covered_days.NOAA21;
+    const binEffRate =
+      exposure.eligible_days > 0 && exposure.viirs_platform_days > 0
+        ? Number(((vCount * exposure.eligible_days) / exposure.viirs_platform_days).toFixed(2))
+        : Number((vCount / kViirs).toFixed(2));
+    bin.viirs_per_platform = binEffRate;
+    bin.viirs_per_effective_platform = binEffRate;
+
   }
 
   const requestedBinsTotal = series.length;
-  const effectiveKViirs =
+  const effectiveKViirs = !hasUnverifiedCoverage
+    ? (
     totalEligibleDays > 0 && totalViirsPlatformDays > 0
       ? Number((totalViirsPlatformDays / totalEligibleDays).toFixed(2))
       : coveredBinsTotal > 0 && sumKViirs > 0
         ? Number((sumKViirs / coveredBinsTotal).toFixed(2))
-        : null;
+        : null
+      )
+    : null;
 
-  const viirsPerActivePlatform =
-    totalEligibleDays > 0 && totalViirsPlatformDays > 0
+  const viirsPerActivePlatform = !hasUnverifiedCoverage && totalEligibleDays > 0 && totalViirsPlatformDays > 0
       ? Number(((totalViirsDetections * totalEligibleDays) / totalViirsPlatformDays).toFixed(2))
-      : effectiveKViirs !== null && effectiveKViirs > 0
+      : !hasUnverifiedCoverage && effectiveKViirs !== null && effectiveKViirs > 0
         ? Number((totalViirsDetections / effectiveKViirs).toFixed(2))
         : null;
 
@@ -444,11 +477,14 @@ export function computeViirsPlatformNormalization(
     viirs_effective_platform_count: effectiveKViirs,
     viirs_per_active_platform: viirsPerActivePlatform,
     viirs_per_effective_platform: viirsPerActivePlatform,
-    normalized_viirs_per_platform: integerNormalizedRate,
-    viirs_per_platform_bin: viirsPerPlatformBin,
+    normalized_viirs_per_platform: hasUnverifiedCoverage ? null : integerNormalizedRate,
+    viirs_per_platform_bin: hasUnverifiedCoverage ? null : viirsPerPlatformBin,
     coverage_completeness_pct: coverageCompletenessPct,
+    coverage_status: hasUnverifiedCoverage ? 'UNVERIFIED' : 'VERIFIED',
     platform_status_note:
-      availableViirsList.length > 0
+      hasUnverifiedCoverage
+        ? 'Normalized VIIRS rates unavailable: authoritative per-platform coverage was not verified for every included bin.'
+        : availableViirsList.length > 0
         ? `Active VIIRS platforms in covered bins: ${availableViirsList.join(', ')} (platform-days = ${totalViirsPlatformDays}/${totalEligibleDays}d, k_eff = ${effectiveKViirs ?? 0})`
         : 'No active VIIRS platforms in covered bins.',
     scientific_caveat:

@@ -17,7 +17,12 @@ import {
   parseViirsRecord,
   validateBoundingBox,
 } from './fireScience';
-import { AoiDefinition, CalendarBinRecord, PlatformRegistryEntry } from '../types/firescope';
+import {
+  AoiDefinition,
+  CalendarBinRecord,
+  PlatformRegistryEntry,
+  SharedQueryState,
+} from '../types/firescope';
 import {
   clusterCrossSensorObservations,
   computeBucketSpatialConcordance,
@@ -2139,6 +2144,7 @@ test('Regression #37 (Gap #3): FR-08 exposes constellation-normalized per-satell
       granularity: 'month',
       sensor: 'ALL',
       platforms: ['TERRA', 'AQUA', ...viirsPlatforms],
+      requireVerifiedPlatformCoverage: true,
       processingStatus: 'ALL',
       dayNight: 'ALL',
       metric: 'detection_count',
@@ -2206,17 +2212,19 @@ test('Regression #37 (Gap #3): FR-08 exposes constellation-normalized per-satell
   assert.equal(comp.totals.viirs_delta, 20);
   assert.equal(comp.totals.period_a_viirs_satellites, 1);
   assert.equal(comp.totals.period_b_viirs_satellites, 3);
-  assert.equal(comp.totals.period_a_viirs_per_satellite, 10);
-  assert.equal(comp.totals.period_b_viirs_per_satellite, 10);
-  assert.equal(comp.totals.viirs_per_satellite_delta, 0);
-  assert.equal(comp.totals.viirs_per_satellite_pct_change, 0);
+  assert.equal(comp.totals.period_a_viirs_per_satellite, null);
+  assert.equal(comp.totals.period_b_viirs_per_satellite, null);
+  assert.equal(comp.totals.viirs_per_satellite_delta, null);
+  assert.equal(comp.totals.viirs_per_satellite_pct_change, null);
   assert.equal(comp.totals.period_a_modis_satellites, 2);
-  assert.equal(comp.totals.period_a_modis_per_satellite, 10);
+  assert.equal(comp.totals.period_a_modis_per_satellite, null);
 
   assert.equal(comp.yoy_summary[0]?.viirs_expected_satellites, 1);
-  assert.equal(comp.yoy_summary[0]?.viirs_per_satellite, 10);
+  assert.equal(comp.yoy_summary[0]?.viirs_per_satellite, null);
   assert.equal(comp.yoy_summary[1]?.viirs_expected_satellites, 3);
-  assert.equal(comp.yoy_summary[1]?.viirs_per_satellite, 10);
+  assert.equal(comp.yoy_summary[1]?.viirs_per_satellite, null);
+  assert.equal(comp.yoy_summary[0]?.exposure_status, 'UNVERIFIED');
+  assert.equal(comp.yoy_summary[1]?.exposure_status, 'UNVERIFIED');
 
   const csv = generatePeriodComparisonCsv(comp);
   assert.ok(
@@ -2224,7 +2232,7 @@ test('Regression #37 (Gap #3): FR-08 exposes constellation-normalized per-satell
       'period_a_modis_per_sat,period_b_modis_per_sat,modis_per_sat_delta,period_a_viirs_per_sat,period_b_viirs_per_sat,viirs_per_sat_delta'
     )
   );
-  assert.ok(csv.includes(',10,10,0,10,10,0'));
+  assert.ok(!csv.includes(',10,10,0,10,10,0'));
 });
 
 test('Regression #38 (Gap #1): Global World View merges Indonesia Parquet in covered windows and preserves NO_SOURCE_DATA outside them', async () => {
@@ -2285,20 +2293,18 @@ test('Regression #38 (Gap #1): Global World View merges Indonesia Parquet in cov
       )
     );
 
-    // 3. /api/v1/analytics/compare for global-world returns multi-year YoY summary with per-sat rates
+    // 3. /api/v1/analytics/compare withholds per-sat rates when source opportunity is unknown
     const cmpRes = await fetch(
       `${baseUrl}/api/v1/analytics/compare?aoi_id=global-world&period_a_start=2024-10-15&period_a_end=2024-10-20&period_b_start=2025-10-15&period_b_end=2025-10-20`
     );
     assert.equal(cmpRes.status, 200);
     const cmpJson = await cmpRes.json();
     assert.ok(Array.isArray(cmpJson.yoy_summary) && cmpJson.yoy_summary.length >= 2);
-    assert.ok(
-      cmpJson.yoy_summary.every(
-        (yr: { viirs_per_satellite?: number; viirs_expected_satellites?: number }) =>
-          typeof yr.viirs_per_satellite === 'number' &&
-          typeof yr.viirs_expected_satellites === 'number'
-      )
-    );
+    assert.ok(cmpJson.yoy_summary.every(
+      (yr: { viirs_per_satellite?: number | null; viirs_expected_satellites?: number; exposure_status?: string }) =>
+        yr.viirs_per_satellite === null && yr.exposure_status === 'UNVERIFIED' &&
+        typeof yr.viirs_expected_satellites === 'number'
+    ));
 
     // 4. /api/v1/observations returns merged total_matching and real observations for global-world
     const obsRes = await fetch(
@@ -2585,9 +2591,9 @@ test('Regression #41 (Gate A.1 & A.2): M2_POINT_PROXIMITY_6H vs M2_GRID_DAILY_02
   assert.equal(pointM2.co_detected_clusters, 1);
   assert.equal(pointM2.viirs_only_clusters, 1);
   assert.equal(pointM2.total_clusters, 2);
-  assert.equal(pointM2.jaccard_index, 50);
-  assert.equal(pointM2.modis_conditional_rate, 100);
-  assert.equal(pointM2.viirs_conditional_rate, 50);
+  assert.equal(pointM2.jaccard_index, 0.5);
+  assert.equal(pointM2.modis_conditional_rate, 1);
+  assert.equal(pointM2.viirs_conditional_rate, 0.5);
 
   assert.ok(gridM2);
   assert.equal(gridM2.method_id, 'M2_GRID_DAILY_025_DEG');
@@ -2595,11 +2601,11 @@ test('Regression #41 (Gate A.1 & A.2): M2_POINT_PROXIMITY_6H vs M2_GRID_DAILY_02
   assert.equal(gridM2.co_detected_clusters, 1);
   assert.equal(gridM2.viirs_only_clusters, 0);
   assert.equal(gridM2.total_clusters, 1);
-  assert.equal(gridM2.jaccard_index, 100);
+  assert.equal(gridM2.jaccard_index, 1);
   assert.notEqual(
     pointM2.jaccard_index,
     gridM2.jaccard_index,
-    'Point M2 (50% Jaccard) and 0.25deg Grid M2 (100% Jaccard) must remain distinct'
+    'Point M2 (0.5 Jaccard) and 0.25deg Grid M2 (1.0 Jaccard) must remain distinct'
   );
 
   // Threshold sensitivity check: tightening temporal window to ±1h separates p1Modis (03:30) and p2ViirsNear (05:10)
@@ -2640,6 +2646,42 @@ test('Regression #42 (Gate A.3): Exposure-weighted VIIRS normalization eliminate
   const rInt = Number((vCount / exp.viirsMaxIntegerPlatforms).toFixed(2));
   assert.equal(rEff, 19578.92);
   assert.equal(rInt, 14140.33);
+});
+
+test('Regression #47 (Gate A): normalized exposure fails closed without verified platform coverage', async () => {
+  const { computePlatformExposure, getInclusiveUtcEndDate } = await import('./harmonizationScience');
+  assert.equal(getInclusiveUtcEndDate('2026-11-02T00:00:00Z'), '2026-11-01');
+  const unknown = computePlatformExposure({
+    startUtc: '2026-11-01',
+    endUtc: '2026-11-02',
+    selectedPlatforms: ['SNPP'],
+    requireVerifiedCoverage: true,
+  });
+  assert.equal(unknown.viirs_coverage_verified, false);
+
+  const verified = computePlatformExposure({
+    startUtc: '2026-11-01',
+    endUtc: '2026-11-02',
+    selectedPlatforms: ['SNPP'],
+    platformCoverageWindows: [
+      { platform: 'SNPP', startDate: '2026-11-01', endDate: '2026-11-02' },
+    ],
+    requireVerifiedCoverage: true,
+  });
+  assert.equal(verified.viirs_coverage_verified, true);
+  assert.equal(verified.viirsPlatformDays, 2);
+
+  const oneUtcDay = computePlatformExposure({
+    startUtc: '2026-11-01T00:00:00Z',
+    endUtc: getInclusiveUtcEndDate('2026-11-02T00:00:00Z'),
+    selectedPlatforms: ['SNPP'],
+    platformCoverageWindows: [
+      { platform: 'SNPP', startDate: '2026-11-01', endDate: '2026-11-01' },
+    ],
+    requireVerifiedCoverage: true,
+  });
+  assert.equal(oneUtcDay.eligible_days, 1);
+  assert.equal(oneUtcDay.viirsPlatformDays, 1);
 });
 
 test('Regression #43 (Gate A.2 & SV-05): aggregateCalendarFromBuckets populates cross_sensor_harmonization, viirs_platform_normalization, and per-bin M2 spatial_concordance', () => {
@@ -2835,10 +2877,74 @@ test('Regression #45 (Finding #8 & #10): Express API bridges Indonesia 2026-11-1
     assert.equal(obsJson.grid_concordance?.method_id, 'M2_GRID_DAILY_025_DEG');
     assert.equal(
       obsJson.grid_concordance?.jaccard_index,
-      nov13.spatial_concordance?.cell_concordance_pct,
+      nov13.spatial_concordance?.jaccard_index,
       'Observations grid_concordance Jaccard must match Calendar bin spatial_concordance Jaccard'
     );
   } finally {
+    await new Promise<void>((resolve, reject) =>
+      srv.close((err) => (err ? reject(err) : resolve()))
+    );
+  }
+});
+
+test('Regression #46 (SV-05): Inspector uses an inclusive end instant for the selected half-open Calendar bin', async () => {
+  const { fetchBoundedObservationsFromApi } = await import('../services/firescopeApi');
+  const { createApiApp } = await import('../../server');
+  const app = createApiApp({ preloadLiveFeeds: false, offlineMode: true });
+  const srv = http.createServer(app);
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+  const { port } = srv.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
+    originalFetch(new URL(String(input), baseUrl), init)) as typeof fetch;
+
+  const state: SharedQueryState = {
+    aoiId: 'kalimantan-peat',
+    customAoi: null,
+    startDate: '2026-10-15',
+    endDate: '2026-10-15',
+    granularity: 'day',
+    sensor: 'ALL',
+    platforms: ['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'],
+    processingStatus: 'ALL',
+    dayNight: 'ALL',
+    modisMinConfidence: 0,
+    viirsCategories: ['low', 'nominal', 'high'],
+    excludeOffshore: true,
+    calendarMetric: 'detection_count',
+    controlDensity: 'overview',
+    selectedBinKey: '2026-10-15',
+    selectedObservationId: null,
+  };
+
+  try {
+    const result = await fetchBoundedObservationsFromApi({
+      state,
+      startUtc: '2026-10-15T00:00:00Z',
+      endUtc: '2026-10-16T00:00:00Z',
+      endUtcIsExclusive: true,
+      limit: 10,
+    });
+    assert.ok(result);
+    assert.equal(result.total_matching, 1645);
+    assert.equal(result.items.length, 10);
+    assert.equal(result.co_location?.evaluation_scope, 'FULL_BIN_POINTS');
+    assert.equal(result.co_location?.total_observations, 1645);
+    assert.equal(result.co_location?.jaccard_index, 0.1568);
+    assert.equal(result.grid_concordance?.evaluation_scope, 'FULL_BIN_GRID_BUCKETS');
+    assert.equal(result.grid_concordance?.total_observations, 2014);
+    assert.equal(result.grid_concordance?.jaccard_index, 0.6154);
+
+    const calendarResponse = await fetch(
+      `${baseUrl}/api/v1/analytics/calendar?aoi_id=kalimantan-peat&start_date=2026-10-15&end_date=2026-10-15&granularity=day&sensor=ALL`
+    );
+    assert.equal(calendarResponse.status, 200);
+    const calendar = await calendarResponse.json();
+    assert.equal(calendar.series[0].spatial_concordance?.jaccard_index, result.grid_concordance?.jaccard_index);
+    assert.equal(calendar.series[0].spatial_concordance?.union_count, result.grid_concordance?.union_count);
+  } finally {
+    globalThis.fetch = originalFetch;
     await new Promise<void>((resolve, reject) =>
       srv.close((err) => (err ? reject(err) : resolve()))
     );

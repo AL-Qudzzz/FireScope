@@ -595,12 +595,17 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
                   : 'No data'}
               </strong>
               {activeBin.values.MODIS !== null &&
-                activeExpectedSats &&
-                activeExpectedSats.modis > 0 && (
+                activeBin.modis_exposure_status === 'VERIFIED' &&
+                (activeBin.modis_effective_platform_count ?? 0) > 0 && (
                   <span className="text-[var(--text-muted)]">
                     {' '}
-                    ({(activeBin.values.MODIS / activeExpectedSats.modis).toFixed(1)}/sat)
+                    ({activeBin.modis_per_effective_platform?.toLocaleString() ?? 'N/A'}/sat · k_eff=
+                    {activeBin.modis_effective_platform_count})
                   </span>
+                )}
+              {activeBin.values.MODIS !== null &&
+                activeBin.modis_exposure_status === 'UNVERIFIED' && (
+                  <span className="text-[var(--text-muted)]"> (rate unavailable · coverage unverified)</span>
                 )}
             </span>
             <span className="text-[var(--text-muted)]">·</span>
@@ -612,21 +617,14 @@ export const CalendarHeatmap: React.FC<CalendarHeatmapProps> = ({
                   : 'No data'}
               </strong>
               {activeBin.values.VIIRS !== null &&
-                ((activeBin.viirs_effective_platform_count ?? activeExpectedSats?.viirs ?? 0) > 0) && (
+                activeBin.viirs_exposure_status === 'VERIFIED' &&
+                (activeBin.viirs_effective_platform_count ?? 0) > 0 && (
                   <span className="text-[var(--text-muted)]">
                     {' '}
                     (
-                    {(
-                      activeBin.viirs_per_effective_platform ??
-                      Number(
-                        (
-                          activeBin.values.VIIRS /
-                          (activeBin.viirs_effective_platform_count ?? activeExpectedSats?.viirs ?? 1)
-                        ).toFixed(2)
-                      )
-                    ).toLocaleString()}
+                    {activeBin.viirs_per_effective_platform?.toLocaleString() ?? 'N/A'}
                     /sat · k_eff=
-                    {activeBin.viirs_effective_platform_count ?? activeExpectedSats?.viirs ?? 0} sat)
+                    {activeBin.viirs_effective_platform_count} sat)
                   </span>
                 )}
             </span>

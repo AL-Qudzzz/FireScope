@@ -35,7 +35,9 @@ import {
   computeBucketSpatialConcordance,
   computeHarmonizedSeries,
   computePlatformExposure,
+  getInclusiveUtcEndDate,
   getExpectedActivePlatforms,
+  PlatformCoverageWindow,
 } from './harmonizationScience';
 
 /**
@@ -234,6 +236,8 @@ export function aggregateCalendarFromBuckets(params: {
   archiveCoverageStart: string;
   archiveCoverageEnd: string;
   coveredDateWindows?: Array<{ startDate: string; endDate: string }>;
+  platformCoverageWindows?: PlatformCoverageWindow[];
+  requireVerifiedPlatformCoverage?: boolean;
   dataMode: CalendarAnalyticsResponse['data_mode'];
   dataBacking?: DataSourceBacking;
   demoNotice: string;
@@ -262,6 +266,8 @@ export function aggregateCalendarFromBuckets(params: {
     archiveCoverageStart = '2001-01-01',
     archiveCoverageEnd = '2026-11-15',
     coveredDateWindows,
+    platformCoverageWindows,
+    requireVerifiedPlatformCoverage = false,
     dataMode,
     dataBacking,
     demoNotice = '',
@@ -613,21 +619,25 @@ export function aggregateCalendarFromBuckets(params: {
 
     const binExposure = computePlatformExposure({
       startUtc: bin.startUtc,
-      endUtc: bin.endUtc,
+      endUtc: getInclusiveUtcEndDate(bin.endUtc),
       selectedPlatforms: platforms,
       observedBreakdown: platformBreakdown,
       platformRegistry,
       coveredDateWindows,
+      platformCoverageWindows,
+      requireVerifiedCoverage: requireVerifiedPlatformCoverage,
     });
     const binViirsPerEff =
       isCoveredBin &&
       viirsCount !== null &&
+      binExposure.viirs_coverage_verified &&
       binExposure.viirsEffectivePlatforms > 0
         ? Number((viirsCount / binExposure.viirsEffectivePlatforms).toFixed(2))
         : null;
     const binModisPerEff =
       isCoveredBin &&
       modisCount !== null &&
+      binExposure.modis_coverage_verified &&
       binExposure.modisEffectivePlatforms > 0
         ? Number((modisCount / binExposure.modisEffectivePlatforms).toFixed(2))
         : null;
@@ -660,14 +670,16 @@ export function aggregateCalendarFromBuckets(params: {
         'Unweighted arithmetic sum of MODIS and VIIRS observation records. Not a normalized cross-sensor fire count or unique incident total.',
       viirs_platform_days: isCoveredBin ? binExposure.viirsPlatformDays : undefined,
       viirs_effective_platform_count: isCoveredBin
-        ? binExposure.viirsEffectivePlatforms
+        ? binExposure.viirs_coverage_verified ? binExposure.viirsEffectivePlatforms : null
         : undefined,
       viirs_per_effective_platform: binViirsPerEff,
+      viirs_exposure_status: binExposure.viirs_coverage_verified ? 'VERIFIED' : 'UNVERIFIED',
       modis_platform_days: isCoveredBin ? binExposure.modisPlatformDays : undefined,
       modis_effective_platform_count: isCoveredBin
-        ? binExposure.modisEffectivePlatforms
+        ? binExposure.modis_coverage_verified ? binExposure.modisEffectivePlatforms : null
         : undefined,
       modis_per_effective_platform: binModisPerEff,
+      modis_exposure_status: binExposure.modis_coverage_verified ? 'VERIFIED' : 'UNVERIFIED',
       quality: {
         coverage_note: coverageNote,
         active_platforms: activePlatforms,
@@ -771,6 +783,8 @@ export function aggregateCalendarFromBuckets(params: {
       start: w.startDate,
       end: w.endDate,
     })),
+    platformCoverageWindows,
+    requireVerifiedCoverage: requireVerifiedPlatformCoverage,
   });
 
   let totalCoLocatedCells = 0;
@@ -885,21 +899,20 @@ function toPeriodBinValue(
   }
   const exposure = computePlatformExposure(
     bin.time_bin_start_utc,
-    bin.time_bin_end_utc,
+    getInclusiveUtcEndDate(bin.time_bin_end_utc),
     selectedPlatforms,
     bin.platform_breakdown
   );
   const modisRate =
-    bin.values.MODIS !== null && exposure.modis_platform_days > 0 && exposure.eligible_days > 0
-      ? Number(((bin.values.MODIS * exposure.eligible_days) / exposure.modis_platform_days).toFixed(2))
-      : bin.values.MODIS !== null && exposure.modis_active_platforms > 0
-        ? Number((bin.values.MODIS / exposure.modis_active_platforms).toFixed(2))
+    bin.modis_exposure_status === 'VERIFIED' &&
+    bin.values.MODIS !== null && (bin.modis_per_effective_platform ?? null) !== null
+      ? bin.modis_per_effective_platform ?? null
         : null;
   const viirsRate =
-    bin.values.VIIRS !== null && exposure.viirs_platform_days > 0 && exposure.eligible_days > 0
-      ? Number(((bin.values.VIIRS * exposure.eligible_days) / exposure.viirs_platform_days).toFixed(2))
-      : bin.values.VIIRS !== null && exposure.viirs_active_platforms > 0
-        ? Number((bin.values.VIIRS / exposure.viirs_active_platforms).toFixed(2))
+    bin.viirs_exposure_status === 'VERIFIED' &&
+    bin.values.VIIRS !== null && bin.viirs_per_effective_platform !== null &&
+    bin.viirs_per_effective_platform !== undefined
+      ? bin.viirs_per_effective_platform
         : null;
 
   return {
@@ -909,10 +922,21 @@ function toPeriodBinValue(
     viirs_detections: bin.values.VIIRS,
     modis_expected_satellites: exposure.modis_active_platforms,
     viirs_expected_satellites: exposure.viirs_active_platforms,
-    modis_effective_satellites: exposure.modis_effective_platform_count,
-    viirs_effective_satellites: exposure.viirs_effective_platform_count,
-    viirs_platform_days: exposure.viirs_platform_days,
-    eligible_days: exposure.eligible_days,
+    modis_effective_satellites: bin.modis_exposure_status === 'VERIFIED'
+      ? bin.modis_effective_platform_count ?? undefined
+      : undefined,
+    viirs_effective_satellites: bin.viirs_exposure_status === 'VERIFIED'
+      ? bin.viirs_effective_platform_count ?? undefined
+      : undefined,
+    viirs_platform_days: bin.viirs_exposure_status === 'VERIFIED'
+      ? bin.viirs_platform_days
+      : undefined,
+    modis_platform_days: bin.modis_exposure_status === 'VERIFIED'
+      ? bin.modis_platform_days
+      : undefined,
+    eligible_days: bin.viirs_exposure_status === 'VERIFIED' && bin.modis_exposure_status === 'VERIFIED'
+      ? bin.eligible_days
+      : undefined,
     modis_per_satellite: modisRate,
     viirs_per_satellite: viirsRate,
     viirs_per_effective_satellite: viirsRate,
@@ -921,6 +945,10 @@ function toPeriodBinValue(
     viirs_frp_sum_mw: bin.frp_summary.VIIRS.sum_mw,
     viirs_frp_mean_mw: bin.frp_summary.VIIRS.mean_mw,
     coverage_state: bin.coverage_state,
+    exposure_status:
+      bin.modis_exposure_status === 'VERIFIED' && bin.viirs_exposure_status === 'VERIFIED'
+        ? 'VERIFIED'
+        : 'UNVERIFIED',
     active_platforms: bin.quality.active_platforms,
     processing_statuses: statuses,
   };
@@ -930,10 +958,11 @@ function sumPeriodPerSatellite(
   calendar: CalendarAnalyticsResponse,
   sensor: 'MODIS' | 'VIIRS',
   rawTotal: number,
-  fallbackExpectedSats: number
+  _fallbackExpectedSats: number
 ): number | null {
   let totalEligibleDays = 0;
   let totalPlatformDays = 0;
+  let hasUnverifiedCoverage = false;
   for (const b of calendar.series) {
     const val = b.values[sensor];
     if (
@@ -943,23 +972,24 @@ function sumPeriodPerSatellite(
     ) {
       continue;
     }
-    const exp = computePlatformExposure(
-      b.time_bin_start_utc,
-      b.time_bin_end_utc,
-      calendar.query.platforms,
-      b.platform_breakdown
-    );
-    const pDays = sensor === 'MODIS' ? exp.modis_platform_days : exp.viirs_platform_days;
-    if (pDays > 0 && exp.eligible_days > 0) {
-      totalEligibleDays += exp.eligible_days;
+    const exposureStatus = sensor === 'MODIS'
+      ? b.modis_exposure_status
+      : b.viirs_exposure_status;
+    if (exposureStatus !== 'VERIFIED') {
+      hasUnverifiedCoverage = true;
+      continue;
+    }
+    const pDays = sensor === 'MODIS' ? b.modis_platform_days : b.viirs_platform_days;
+    if (typeof pDays === 'number' && pDays > 0 && typeof b.eligible_days === 'number' && b.eligible_days > 0) {
+      totalEligibleDays += b.eligible_days;
       totalPlatformDays += pDays;
+    } else {
+      hasUnverifiedCoverage = true;
     }
   }
+  if (hasUnverifiedCoverage) return null;
   if (totalEligibleDays > 0 && totalPlatformDays > 0) {
     return Number(((rawTotal * totalEligibleDays) / totalPlatformDays).toFixed(2));
-  }
-  if (fallbackExpectedSats > 0) {
-    return Number((rawTotal / fallbackExpectedSats).toFixed(2));
   }
   return null;
 }
@@ -1120,31 +1150,35 @@ export function buildPeriodComparisonResponse(params: {
       : null;
 
   const enrichedYoySummary: YoyYearSummary[] = yoySummary.map((yr) => {
-    const exp = computePlatformExposure(
+    const exp = computePlatformExposure({
+      startUtc: yr.start_date,
+      endUtc: yr.end_date,
+      selectedPlatforms: periodB.query.platforms,
+      requireVerifiedCoverage: true,
+    });
+    const expected = getExpectedActivePlatforms(
       yr.start_date,
       yr.end_date,
-      periodB.query.platforms,
-      undefined
+      periodB.query.platforms
     );
-    const modisRate =
-      exp.modis_platform_days > 0 && exp.eligible_days > 0
-        ? Number(((yr.modis_detections * exp.eligible_days) / exp.modis_platform_days).toFixed(2))
-        : exp.modis_active_platforms > 0
-          ? Number((yr.modis_detections / exp.modis_active_platforms).toFixed(2))
-          : 0;
-    const viirsRate =
-      exp.viirs_platform_days > 0 && exp.eligible_days > 0
-        ? Number(((yr.viirs_detections * exp.eligible_days) / exp.viirs_platform_days).toFixed(2))
-        : exp.viirs_active_platforms > 0
-          ? Number((yr.viirs_detections / exp.viirs_active_platforms).toFixed(2))
-          : 0;
+    const modisRate = exp.modis_coverage_verified && exp.modis_platform_days > 0 && exp.eligible_days > 0
+      ? Number(((yr.modis_detections * exp.eligible_days) / exp.modis_platform_days).toFixed(2))
+      : null;
+    const viirsRate = exp.viirs_coverage_verified && exp.viirs_platform_days > 0 && exp.eligible_days > 0
+      ? Number(((yr.viirs_detections * exp.eligible_days) / exp.viirs_platform_days).toFixed(2))
+      : null;
     return {
       ...yr,
-      modis_expected_satellites: yr.modis_expected_satellites ?? exp.modis_active_platforms,
-      viirs_expected_satellites: yr.viirs_expected_satellites ?? exp.viirs_active_platforms,
-      modis_effective_satellites: exp.modis_effective_platform_count,
-      viirs_effective_satellites: exp.viirs_effective_platform_count,
-      viirs_platform_days: exp.viirs_platform_days,
+      modis_expected_satellites: yr.modis_expected_satellites ?? expected.modis,
+      viirs_expected_satellites: yr.viirs_expected_satellites ?? expected.viirs,
+      modis_effective_satellites: exp.modis_coverage_verified
+        ? exp.modis_effective_platform_count
+        : undefined,
+      viirs_effective_satellites: exp.viirs_coverage_verified
+        ? exp.viirs_effective_platform_count
+        : undefined,
+      viirs_platform_days: exp.viirs_coverage_verified ? exp.viirs_platform_days : undefined,
+      exposure_status: exp.modis_coverage_verified && exp.viirs_coverage_verified ? 'VERIFIED' : 'UNVERIFIED',
       eligible_days: exp.eligible_days,
       modis_per_satellite: modisRate,
       viirs_per_satellite: viirsRate,

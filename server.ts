@@ -78,6 +78,7 @@ import {
 import {
   clusterCrossSensorObservations,
   computeBucketSpatialConcordance,
+  PlatformCoverageWindow,
 } from './src/science/harmonizationScience';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -174,6 +175,43 @@ function getIndonesiaGapBackfill(): IndonesiaGapBackfillArtifact | null {
     cachedIndonesiaGapBackfill = null;
     return null;
   }
+}
+
+function getParquetPlatformCoverageWindows(
+  sourceFiles: ParquetArchiveManifest['source_files']
+): PlatformCoverageWindow[] {
+  return sourceFiles.flatMap((source) => {
+    const match = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/.exec(
+      source.date_window
+    );
+    if (!match) return [];
+    return source.platforms.map((platform) => ({
+      platform,
+      startDate: match[1],
+      endDate: match[2],
+    }));
+  });
+}
+
+function getBackfillPlatformCoverageWindows(
+  backfill: IndonesiaGapBackfillArtifact | null
+): PlatformCoverageWindow[] {
+  if (!backfill) return [];
+  return (backfill.feed_stats ?? []).flatMap((feed) => {
+    const record = feed as Record<string, unknown>;
+    if (record.http_status !== 200) return [];
+    const platform = String(record.default_platform ?? '');
+    const startDate = String(record.date ?? backfill.gap_date);
+    if (!['TERRA', 'AQUA', 'SNPP', 'NOAA20', 'NOAA21'].includes(platform)) return [];
+    const platforms = platform === 'TERRA' && record.product_id === 'MODIS_NRT'
+      ? ['TERRA', 'AQUA']
+      : [platform];
+    return platforms.map((coveredPlatform) => ({
+      platform: coveredPlatform as PlatformCoverageWindow['platform'],
+      startDate,
+      endDate: startDate,
+    }));
+  });
 }
 
 function isEligibleForAreaApi(aoi: AoiDefinition): boolean {
@@ -724,7 +762,6 @@ async function computeServerCalendarAnalytics(params: {
     if (firmsSnap.connected && firmsSnap.minDate <= firmsSnap.maxDate) {
       coveredDateWindows.push({ startDate: firmsSnap.minDate, endDate: firmsSnap.maxDate });
     }
-
     const hasParquetRows =
       startDate <= parquetEndDate &&
       endDate >= manifest.date_range.min_date &&
@@ -741,6 +778,10 @@ async function computeServerCalendarAnalytics(params: {
         : hasParquetRows
         ? 'REAL_NASA_ARCHIVE_PARQUET'
         : 'NO_SOURCE_DATA';
+    const platformCoverageWindows = [
+      ...(hasParquetRows ? getParquetPlatformCoverageWindows(manifest.source_files) : []),
+      ...(hasBackfillDateInQuery ? getBackfillPlatformCoverageWindows(backfill) : []),
+    ];
 
     const sources: string[] = [];
     if (hasParquetRows) {
@@ -789,6 +830,8 @@ async function computeServerCalendarAnalytics(params: {
       archiveCoverageStart: manifest.date_range.min_date,
       archiveCoverageEnd: firmsSnap.connected ? liveMaxDate : effectiveArchiveEndDate,
       coveredDateWindows,
+      platformCoverageWindows,
+      requireVerifiedPlatformCoverage: true,
       dataMode: 'LIVE_NASA_FIRMS',
       dataBacking,
       demoNotice:
@@ -1101,6 +1144,10 @@ async function computeServerCalendarAnalytics(params: {
     archiveCoverageStart: archiveStart,
     archiveCoverageEnd: archiveEnd,
     coveredDateWindows,
+    platformCoverageWindows: indParquetMergedInGlobal && manifest?.available
+      ? getParquetPlatformCoverageWindows(manifest.source_files)
+      : undefined,
+    requireVerifiedPlatformCoverage: true,
     dataMode: 'LIVE_NASA_FIRMS',
     dataBacking,
     demoNotice:

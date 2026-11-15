@@ -328,6 +328,8 @@ export async function fetchBoundedObservationsFromApi(params: {
   state: SharedQueryState;
   startUtc?: string;
   endUtc?: string;
+  /** Calendar bins use a half-open interval, while the observations API end is inclusive. */
+  endUtcIsExclusive?: boolean;
   limit?: number;
   signal?: AbortSignal;
 }): Promise<PaginatedObservationsResponse | null> {
@@ -336,7 +338,10 @@ export async function fetchBoundedObservationsFromApi(params: {
     const sp = new URLSearchParams();
     appendAoiParams(sp, state);
     sp.set('start_datetime_utc', params.startUtc ?? `${state.startDate}T00:00:00Z`);
-    sp.set('end_datetime_utc', params.endUtc ?? `${state.endDate}T23:59:59Z`);
+    const inclusiveEndUtc = params.endUtcIsExclusive && params.endUtc
+      ? new Date(Date.parse(params.endUtc) - 1).toISOString()
+      : params.endUtc ?? `${state.endDate}T23:59:59Z`;
+    sp.set('end_datetime_utc', inclusiveEndUtc);
     sp.set('sensor', state.sensor);
     sp.set('platforms', state.platforms.join(','));
     sp.set('processing_status', state.processingStatus);
@@ -563,7 +568,7 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
   if (vpn) {
     headerComments.push(
       `# VIIRS Exposure-Weighted Normalization: ${vpn.method_id} | Formula: ${vpn.formula}`,
-      `# VIIRS Exposure Summary: window_days=${vpn.window_days ?? 'N/A'}, viirs_platform_days=${vpn.viirs_platform_days ?? 'N/A'}, k_eff=${vpn.effective_viirs_platforms ?? vpn.expected_viirs_platforms}, raw_viirs=${vpn.raw_viirs_detections}, viirs_per_effective_sat=${vpn.viirs_per_effective_platform ?? vpn.normalized_viirs_per_platform ?? 'N/A'}, integer_k_rate=${vpn.normalized_viirs_per_platform ?? 'N/A'}`
+      `# VIIRS Exposure Summary: window_days=${vpn.window_days ?? 'N/A'}, viirs_platform_days=${vpn.viirs_platform_days ?? 'N/A'}, k_eff=${vpn.coverage_status === 'VERIFIED' ? vpn.effective_viirs_platforms ?? 'N/A' : 'N/A'}, raw_viirs=${vpn.raw_viirs_detections}, viirs_per_effective_sat=${vpn.coverage_status === 'VERIFIED' ? vpn.viirs_per_effective_platform ?? 'N/A' : 'N/A'}, integer_k_rate=${vpn.coverage_status === 'VERIFIED' ? vpn.normalized_viirs_per_platform ?? 'N/A' : 'N/A'}`
     );
   }
 
@@ -655,15 +660,15 @@ export function generateProvenanceCsv(analytics: CalendarAnalyticsResponse): str
       b.viirs_effective_platform_count ?? exposure.viirsEffectivePlatforms;
 
     const modisPerSat =
-      !isNoData && b.values.MODIS !== null && exp.modis > 0
+      !isNoData && b.modis_exposure_status === 'VERIFIED' && b.values.MODIS !== null && exp.modis > 0
         ? Number((b.values.MODIS / exp.modis).toFixed(2))
         : '';
     const viirsPerSat =
-      !isNoData && b.values.VIIRS !== null && exp.viirs > 0
+      !isNoData && b.viirs_exposure_status === 'VERIFIED' && b.values.VIIRS !== null && exp.viirs > 0
         ? Number((b.values.VIIRS / exp.viirs).toFixed(2))
         : '';
     const viirsPerEff =
-      !isNoData && b.values.VIIRS !== null
+      !isNoData && b.viirs_exposure_status === 'VERIFIED' && b.values.VIIRS !== null
         ? b.viirs_per_effective_platform ??
           (viirsEffCount > 0 ? Number((b.values.VIIRS / viirsEffCount).toFixed(2)) : '')
         : '';

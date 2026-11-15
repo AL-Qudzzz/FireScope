@@ -650,6 +650,14 @@ export default function App() {
                             <div className="text-[26px] leading-tight font-mono font-semibold text-[var(--viirs)] tabular-nums">
                               {calendarAnalytics.totals.VIIRS_detections.toLocaleString()}
                             </div>
+                            {calendarAnalytics.viirs_platform_normalization?.coverage_status === 'UNVERIFIED' && (
+                              <div
+                                className="text-[10px] font-mono text-[var(--text-muted)]"
+                                title="Normalized rate is withheld because authoritative per-platform coverage is unavailable."
+                              >
+                                R_VIIRS unavailable · platform coverage unverified
+                              </div>
+                            )}
                             {(calendarAnalytics.viirs_platform_normalization?.viirs_per_effective_platform ??
                               calendarAnalytics.viirs_platform_normalization?.normalized_viirs_per_platform) !==
                               null &&

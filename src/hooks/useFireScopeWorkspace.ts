@@ -671,6 +671,7 @@ export function useFireScopeWorkspace() {
       state: queryState,
       startUtc: selectedBin.time_bin_start_utc,
       endUtc: selectedBin.time_bin_end_utc,
+      endUtcIsExclusive: true,
       limit: 150,
       signal: controller.signal,
     })

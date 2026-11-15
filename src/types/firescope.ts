@@ -191,10 +191,12 @@ export interface BinSpatialConcordance {
   spatial_co_located_cells_pct: number | null;
   spatial_concordance_pct?: number | null;
   cell_concordance_pct: number | null;
+  /** Jaccard proportion in [0,1], shared across Calendar and Inspector responses. */
   jaccard_index?: number | null;
   modis_cell_co_detection_pct?: number | null;
   modis_cell_co_detected_pct: number | null;
   modis_co_detected_by_viirs_pct?: number | null;
+  /** Conditional-rate proportions in [0,1]; *_pct aliases are percentages. */
   modis_conditional_rate?: number | null;
   viirs_cell_co_detection_pct?: number | null;
   viirs_cell_co_detected_pct: number | null;
@@ -246,6 +248,7 @@ export interface ViirsPlatformNormalizationSummary {
   coverage_completeness_pct: number | null;
   platform_status_note?: string;
   scientific_caveat: string;
+  coverage_status?: 'VERIFIED' | 'UNVERIFIED';
 }
 
 export interface SourceContributionProvenance {
@@ -358,10 +361,15 @@ export interface CalendarBinRecord {
   spatial_concordance?: BinSpatialConcordance;
   k_viirs_active?: number;
   viirs_platform_days?: number;
+  modis_platform_days?: number;
   eligible_days?: number;
   viirs_effective_platform_count?: number | null;
+  modis_effective_platform_count?: number | null;
   viirs_per_platform?: number | null;
   viirs_per_effective_platform?: number | null;
+  modis_per_effective_platform?: number | null;
+  viirs_exposure_status?: 'VERIFIED' | 'UNVERIFIED';
+  modis_exposure_status?: 'VERIFIED' | 'UNVERIFIED';
   m3_status?: 'M3_DISABLED';
   values: {
     MODIS: number | null;
@@ -705,10 +713,12 @@ export interface PeriodBinValue {
   modis_effective_satellites?: number;
   viirs_effective_satellites?: number;
   viirs_platform_days?: number;
+  modis_platform_days?: number;
   eligible_days?: number;
   modis_per_satellite?: number | null;
   viirs_per_satellite?: number | null;
   viirs_per_effective_satellite?: number | null;
+  exposure_status?: 'VERIFIED' | 'UNVERIFIED';
   modis_frp_sum_mw: number | null;
   modis_frp_mean_mw: number | null;
   viirs_frp_sum_mw: number | null;
@@ -741,9 +751,10 @@ export interface YoyYearSummary {
   viirs_effective_satellites?: number;
   viirs_platform_days?: number;
   eligible_days?: number;
-  modis_per_satellite?: number;
-  viirs_per_satellite?: number;
-  viirs_per_effective_satellite?: number;
+  modis_per_satellite?: number | null;
+  viirs_per_satellite?: number | null;
+  viirs_per_effective_satellite?: number | null;
+  exposure_status?: 'VERIFIED' | 'UNVERIFIED';
   modis_frp_sum_mw: number | null;
   modis_frp_mean_mw: number | null;
   viirs_frp_sum_mw: number | null;
@@ -997,7 +1008,9 @@ export interface CoLocationSummary {
   viirs_eligible_count?: number;
   intersection_count?: number;
   union_count?: number;
+  /** Proportion in [0,1], consistent with BinSpatialConcordance.jaccard_index. */
   jaccard_index?: number | null;
+  /** Proportion in [0,1]; use *_pct fields for percentage values. */
   modis_conditional_rate?: number | null;
   viirs_conditional_rate?: number | null;
   spatial_concordance_pct?: number | null;

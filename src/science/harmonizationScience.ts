@@ -57,6 +57,8 @@ export interface PlatformExposureResult {
   modis_effective_platform_count: number;
   viirs_effective_platform_count: number;
   per_platform_covered_days: Record<PlatformId, number>;
+  modis_coverage_verified: boolean;
+  viirs_coverage_verified: boolean;
   // CamelCase aliases for callers in comparisonScience, firescopeApi, and tests
   windowDays: number;
   modisPlatformDays: number;
@@ -65,6 +67,21 @@ export interface PlatformExposureResult {
   viirsEffectivePlatforms: number;
   modisMaxIntegerPlatforms: number;
   viirsMaxIntegerPlatforms: number;
+}
+
+export interface PlatformCoverageWindow {
+  platform: PlatformId;
+  startDate: string;
+  endDate: string;
+}
+
+/** Convert an ISO time-bin's exclusive end instant to the final covered UTC date. */
+export function getInclusiveUtcEndDate(endUtc: string): string {
+  if (!endUtc.includes('T')) return endUtc.slice(0, 10);
+  const endMs = Date.parse(endUtc);
+  return Number.isFinite(endMs)
+    ? new Date(endMs - 1).toISOString().slice(0, 10)
+    : endUtc.slice(0, 10);
 }
 
 export interface PlatformExposureOptions {
@@ -83,6 +100,8 @@ export interface PlatformExposureOptions {
     startDate?: string;
     endDate?: string;
   }>;
+  platformCoverageWindows?: PlatformCoverageWindow[];
+  requireVerifiedCoverage?: boolean;
 }
 
 /**
@@ -125,6 +144,10 @@ export function computePlatformExposure(
   const rawCoveredWindows = isOpts
     ? startDateUtcOrOpts.coveredDateWindows
     : coveredDateWindowsArg;
+  const platformCoverageWindows = isOpts
+    ? startDateUtcOrOpts.platformCoverageWindows
+    : undefined;
+  const requireVerifiedCoverage = isOpts && startDateUtcOrOpts.requireVerifiedCoverage === true;
 
   const normalizedWindows = rawCoveredWindows
     ?.map((w) => ({
@@ -165,6 +188,8 @@ export function computePlatformExposure(
     NOAA20: 0,
     NOAA21: 0,
   };
+  let modisCoverageVerified = !requireVerifiedCoverage || platformCoverageWindows !== undefined;
+  let viirsCoverageVerified = !requireVerifiedCoverage || platformCoverageWindows !== undefined;
 
   const startMs = Date.parse(`${startDay}T00:00:00Z`);
   const endMs = Date.parse(`${endDay}T00:00:00Z`);
@@ -183,14 +208,28 @@ export function computePlatformExposure(
         if (!activeSet.has(p)) continue;
         const win = serviceWindows[p];
         if (dStr >= win.start && dStr <= win.end) {
-          perPlatformDays[p] += 1;
+          const hasPlatformCoverage = platformCoverageWindows === undefined
+            ? !requireVerifiedCoverage
+            : platformCoverageWindows.some((coverage) =>
+                coverage.platform === p && dStr >= coverage.startDate && dStr <= coverage.endDate
+              );
+          if (!hasPlatformCoverage) {
+            if (MODIS_PLATFORMS.includes(p)) modisCoverageVerified = false;
+            if (VIIRS_PLATFORMS.includes(p)) viirsCoverageVerified = false;
+          } else {
+            perPlatformDays[p] += 1;
+          }
         }
       }
     }
   }
 
   for (const p of [...MODIS_PLATFORMS, ...VIIRS_PLATFORMS]) {
-    if ((platformBreakdown?.[p] ?? 0) > 0 && perPlatformDays[p] === 0) {
+    if (
+      !requireVerifiedCoverage &&
+      (platformBreakdown?.[p] ?? 0) > 0 &&
+      perPlatformDays[p] === 0
+    ) {
       perPlatformDays[p] = 1;
       if (eligibleDays === 0) eligibleDays = 1;
     }
@@ -221,6 +260,8 @@ export function computePlatformExposure(
     modis_effective_platform_count: modisEff4,
     viirs_effective_platform_count: viirsEff4,
     per_platform_covered_days: perPlatformDays,
+    modis_coverage_verified: modisCoverageVerified,
+    viirs_coverage_verified: viirsCoverageVerified,
     windowDays: eligibleDays,
     modisPlatformDays,
     viirsPlatformDays,
@@ -980,15 +1021,15 @@ export function clusterCrossSensorObservations(
   const intersectionCount = coDetectedClusters;
   const modisEligibleClusters = coDetectedClusters + modisOnlyClusters;
   const viirsEligibleClusters = coDetectedClusters + viirsOnlyClusters;
-  const jaccardPct =
-    unionCount > 0 ? roundTo((intersectionCount / unionCount) * 100, 2) : null;
+  const jaccardRatio =
+    unionCount > 0 ? roundTo(intersectionCount / unionCount, 4) : null;
   const modisCondRate =
     modisEligibleClusters > 0
-      ? roundTo((intersectionCount / modisEligibleClusters) * 100, 2)
+      ? roundTo(intersectionCount / modisEligibleClusters, 4)
       : null;
   const viirsCondRate =
     viirsEligibleClusters > 0
-      ? roundTo((intersectionCount / viirsEligibleClusters) * 100, 2)
+      ? roundTo(intersectionCount / viirsEligibleClusters, 4)
       : null;
 
   return {
@@ -1004,12 +1045,12 @@ export function clusterCrossSensorObservations(
     viirs_eligible_count: viirsEligibleClusters,
     intersection_count: intersectionCount,
     union_count: unionCount,
-    jaccard_index: jaccardPct,
+    jaccard_index: jaccardRatio,
     modis_conditional_rate: modisCondRate,
     viirs_conditional_rate: viirsCondRate,
-    spatial_concordance_pct: jaccardPct,
-    modis_co_detection_pct: modisCondRate,
-    viirs_co_detection_pct: viirsCondRate,
+    spatial_concordance_pct: jaccardRatio === null ? null : roundTo(jaccardRatio * 100, 2),
+    modis_co_detection_pct: modisCondRate === null ? null : roundTo(modisCondRate * 100, 2),
+    viirs_co_detection_pct: viirsCondRate === null ? null : roundTo(viirsCondRate * 100, 2),
     coverage_state: options?.coverageState ?? 'OBSERVED_ACTIVE',
     source_backing: options?.sourceBacking ?? 'REAL_NASA_ARCHIVE_PARQUET',
     note: 'M2_POINT_PROXIMITY_6H: Point-level single-linkage Union-Find clustering within footprint radius (1.5–2.5 km) and ±6h overpass tolerance. Measures acute event-level co-location (~7–20 km²); not directly comparable to M2_GRID_DAILY_025_DEG (~771 km² 0.25° daily cell co-occurrence). Single-linkage chaining can merge contiguous fire fronts bridged by intermediate pixels.',
@@ -1177,15 +1218,15 @@ export function computeBucketSpatialConcordance(
   const intersectionCount = coDetectedClusters;
   const modisEligibleCells = coDetectedClusters + modisOnlyClusters;
   const viirsEligibleCells = coDetectedClusters + viirsOnlyClusters;
-  const jaccardPct =
-    unionCount > 0 ? roundTo((intersectionCount / unionCount) * 100, 2) : null;
+  const jaccardRatio =
+    unionCount > 0 ? roundTo(intersectionCount / unionCount, 4) : null;
   const modisCondRate =
     modisEligibleCells > 0
-      ? roundTo((intersectionCount / modisEligibleCells) * 100, 2)
+      ? roundTo(intersectionCount / modisEligibleCells, 4)
       : null;
   const viirsCondRate =
     viirsEligibleCells > 0
-      ? roundTo((intersectionCount / viirsEligibleCells) * 100, 2)
+      ? roundTo(intersectionCount / viirsEligibleCells, 4)
       : null;
 
   return {
@@ -1201,12 +1242,12 @@ export function computeBucketSpatialConcordance(
     viirs_eligible_count: viirsEligibleCells,
     intersection_count: intersectionCount,
     union_count: unionCount,
-    jaccard_index: jaccardPct,
+    jaccard_index: jaccardRatio,
     modis_conditional_rate: modisCondRate,
     viirs_conditional_rate: viirsCondRate,
-    spatial_concordance_pct: jaccardPct,
-    modis_co_detection_pct: modisCondRate,
-    viirs_co_detection_pct: viirsCondRate,
+    spatial_concordance_pct: jaccardRatio === null ? null : roundTo(jaccardRatio * 100, 2),
+    modis_co_detection_pct: modisCondRate === null ? null : roundTo(modisCondRate * 100, 2),
+    viirs_co_detection_pct: viirsCondRate === null ? null : roundTo(viirsCondRate * 100, 2),
     coverage_state: options?.coverageState ?? 'OBSERVED_ACTIVE',
     source_backing: options?.sourceBacking ?? 'REAL_NASA_ARCHIVE_PARQUET',
     note: 'M2_GRID_DAILY_025_DEG: Coarse 0.25° × 0.25° (~771 km² at equator, scaling with cos(latitude)) same-UTC-day cell co-occurrence index. Evaluates landscape-scale co-activity; yields ~3× higher Jaccard concordance than M2_POINT_PROXIMITY_6H (~7–20 km², ±6h) and must not be conflated with point proximity clustering.',

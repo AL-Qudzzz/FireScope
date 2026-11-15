@@ -1012,7 +1012,7 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                                   />
                                 </div>
                               </div>
-                              {yr.modis_per_satellite !== undefined && (
+                              {typeof yr.modis_per_satellite === 'number' && (
                                 <div className="text-[10px] text-[var(--text-muted)] pl-18">
                                   {yr.modis_per_satellite.toLocaleString()}/sat (
                                   {yr.modis_expected_satellites ?? 2}M)
@@ -1036,10 +1036,15 @@ export const PeriodComparisonPanel: React.FC<PeriodComparisonPanelProps> = ({
                                   />
                                 </div>
                               </div>
-                              {yr.viirs_per_satellite !== undefined && (
+                              {typeof yr.viirs_per_satellite === 'number' && (
                                 <div className="text-[10px] text-[var(--text-muted)] pl-18">
                                   {yr.viirs_per_satellite.toLocaleString()}/sat (
                                   {yr.viirs_expected_satellites ?? 1}V)
+                                </div>
+                              )}
+                              {yr.exposure_status === 'UNVERIFIED' && (
+                                <div className="text-[10px] text-[var(--text-muted)] pl-18">
+                                  Per-platform rates unavailable · coverage unverified
                                 </div>
                               )}
                             </td>
